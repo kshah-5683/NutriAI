@@ -1,0 +1,158 @@
+package com.app.nutriai.data.repository
+
+import android.util.Log
+import com.app.nutriai.data.local.dao.IfctFoodDao
+import com.app.nutriai.data.local.entity.toNutritionInfo
+import com.app.nutriai.data.remote.api.FoodDataCentralApiService
+import com.app.nutriai.data.remote.dto.toNutritionInfo
+import com.app.nutriai.domain.model.NutritionInfo
+import com.app.nutriai.domain.repository.NutritionRepository
+import com.app.nutriai.util.IfctCsvLoader
+import com.app.nutriai.util.Resource
+import javax.inject.Inject
+import javax.inject.Named
+import javax.inject.Singleton
+
+/**
+ * Implementation of [NutritionRepository] using a two-tier lookup chain:
+ *
+ * **Tier 1 — USDA FoodData Central (FDC):** Online REST API backed by USDA's
+ * authoritative database of Foundation, SR Legacy, and Branded foods.
+ * Requires [fdcApiKey] from BuildConfig (local.properties: USDA_FDC_API_KEY).
+ * Returns up to 5 ranked results; Foundation/SR Legacy preferred over Branded.
+ *
+ * **Tier 2 — IFCT 2017 (offline):** ~120 common Indian foods from the National
+ * Institute of Nutrition (NIN) ICMR IFCT 2017 tables, bundled as a CSV asset
+ * and seeded into Room on first launch via [IfctCsvLoader]. Activated when FDC
+ * is unreachable (VPN, no internet) or returns no usable results.
+ *
+ * **Tier 3 — null:** Both tiers produced nothing. [LookupNutritionUseCase] will
+ * return [Resource.Success] with null, and the UI prompts manual entry.
+ *
+ * Phase 5.5: Two-tier USDA FDC implementation.
+ * Domain interface [NutritionRepository] is unchanged.
+ */
+@Singleton
+class NutritionRepositoryImpl @Inject constructor(
+    private val fdcApiService: FoodDataCentralApiService,
+    @Named("fdcApiKey") private val fdcApiKey: String,
+    private val ifctFoodDao: IfctFoodDao,
+    private val ifctCsvLoader: IfctCsvLoader
+) : NutritionRepository {
+
+    override suspend fun searchNutrition(foodName: String): Resource<List<NutritionInfo>> {
+        // Ensure IFCT table is populated (no-op after first launch)
+        runCatching { ifctCsvLoader.seedIfNeeded() }
+
+        // ── Tier 1: USDA FoodData Central ──────────────────────────────────
+        val fdcResult = tryFdc(foodName)
+        if (fdcResult != null) return fdcResult
+
+        // ── Tier 2: IFCT 2017 offline fallback ─────────────────────────────
+        val ifctResult = tryIfct(foodName)
+        if (ifctResult != null) return ifctResult
+
+        // ── Tier 3: Nothing found ───────────────────────────────────────────
+        Log.d(TAG, "No results from FDC or IFCT for \"$foodName\"")
+        return Resource.Success(emptyList())
+    }
+
+    // ─── Tier 1: FDC ─────────────────────────────────────────────────────────
+
+    private suspend fun tryFdc(foodName: String): Resource<List<NutritionInfo>>? {
+        if (fdcApiKey.isBlank()) {
+            Log.w(TAG, "USDA_FDC_API_KEY is not set — skipping FDC lookup.")
+            return null
+        }
+
+        return try {
+            Log.d(TAG, "FDC search: \"$foodName\"")
+            val response = fdcApiService.searchFood(query = foodName, apiKey = fdcApiKey)
+            Log.d(TAG, "FDC returned ${response.foods.size} foods for \"$foodName\"")
+
+            val results = response.foods
+                .filter { it.hasUsableData }
+                .mapNotNull { it.toNutritionInfo() }
+                .sortedByDescending { info ->
+                    // Prefer Foundation/SR Legacy (comprehensive macros) over Branded
+                    var score = 0
+                    if (info.caloriesPer100g > 0) score += 4
+                    if (info.proteinPer100g > 0) score += 1
+                    if (info.carbsPer100g > 0) score += 1
+                    if (info.fatPer100g > 0) score += 1
+                    score
+                }
+
+            if (results.isNotEmpty()) {
+                Log.d(TAG, "FDC: ${results.size} usable results for \"$foodName\"")
+                Resource.Success(results)
+            } else {
+                Log.d(TAG, "FDC: no usable results for \"$foodName\" — trying IFCT")
+                null  // Fall through to IFCT
+            }
+
+        } catch (e: retrofit2.HttpException) {
+            val msg = when (e.code()) {
+                403 -> "FDC API key invalid or quota exceeded."
+                429 -> "FDC rate-limited — please try again shortly."
+                500, 502, 503 -> "USDA FoodData Central temporarily unavailable."
+                else -> "FDC lookup failed (HTTP ${e.code()})."
+            }
+            Log.e(TAG, "FDC HTTP ${e.code()} for \"$foodName\": ${e.message()}", e)
+            // Non-fatal — fall through to IFCT unless it's a key/auth issue
+            if (e.code() == 403) Resource.Error(msg, e) else null
+
+        } catch (e: java.net.UnknownHostException) {
+            Log.w(TAG, "FDC unreachable (no internet / VPN) for \"$foodName\" — trying IFCT")
+            null  // Fall through to IFCT silently
+
+        } catch (e: java.net.SocketTimeoutException) {
+            Log.w(TAG, "FDC timeout for \"$foodName\" — trying IFCT")
+            null
+
+        } catch (e: java.io.IOException) {
+            Log.w(TAG, "FDC IO error for \"$foodName\": ${e::class.simpleName} — trying IFCT")
+            null
+
+        } catch (e: Exception) {
+            Log.e(TAG, "FDC unexpected error for \"$foodName\": ${e::class.simpleName}", e)
+            null
+        }
+    }
+
+    // ─── Tier 2: IFCT ────────────────────────────────────────────────────────
+
+    private suspend fun tryIfct(foodName: String): Resource<List<NutritionInfo>>? {
+        return try {
+            Log.d(TAG, "IFCT search: \"$foodName\"")
+
+            // First try full-phrase match
+            var rows = ifctFoodDao.searchByName(query = foodName)
+
+            // If nothing, try each individual word (handles "chicken breast" → "breast")
+            if (rows.isEmpty()) {
+                val words = foodName.trim().split(Regex("\\s+")).filter { it.length > 2 }
+                for (word in words) {
+                    rows = ifctFoodDao.searchByWord(word = word)
+                    if (rows.isNotEmpty()) break
+                }
+            }
+
+            if (rows.isNotEmpty()) {
+                Log.d(TAG, "IFCT: ${rows.size} results for \"$foodName\"")
+                Resource.Success(rows.map { it.toNutritionInfo() })
+            } else {
+                Log.d(TAG, "IFCT: no results for \"$foodName\"")
+                null
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "IFCT query error for \"$foodName\": ${e.message}", e)
+            null
+        }
+    }
+
+    companion object {
+        private const val TAG = "NutritionRepo"
+    }
+}

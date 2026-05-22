@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Splash / window background — warm cream matching LightColorScheme.background -->
+    <color name="window_background">#FEFBF3</color>
+    <!-- App icon adaptive background — forest green -->
+    <color name="ic_launcher_background">#2D5A27</color>
+</resources>

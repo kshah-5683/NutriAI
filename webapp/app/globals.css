@@ -1,0 +1,109 @@
+@import "tailwindcss";
+
+/* ─── Forest & Cream Design System ──────────────────────────────────────── */
+
+@theme {
+  /* Primary — Forest Green */
+  --color-primary: #2D5A27;
+  --color-primary-light: #A8D99C;
+  --color-primary-dark: #1B3D17;
+  --color-primary-container: #D4E8C8;
+  --color-primary-container-dark: #3A4F34;
+
+  /* Secondary — Lime */
+  --color-secondary: #6B9B37;
+  --color-secondary-light: #C0E17E;
+  --color-secondary-dark: #3D6B1F;
+  --color-secondary-container: #E8F5E1;
+  --color-secondary-container-dark: #2A3D24;
+
+  /* Tertiary — Amber */
+  --color-tertiary: #F9A825;
+  --color-tertiary-light: #FFD95A;
+  --color-tertiary-dark: #B27A00;
+  --color-tertiary-container: #FFF3D6;
+  --color-tertiary-container-dark: #3D3420;
+
+  /* Neutrals — Warm Cream */
+  --color-cream: #FEFBF3;
+  --color-cream-surface: #FFFFFF;
+  --color-charcoal: #1A1C18;
+  --color-mid-green: #3C4A37;
+  --color-sage-gray: #EEF2E6;
+  --color-warm-gray: #C8C8BC;
+
+  /* Dark theme surfaces */
+  --color-dark-forest: #0F1A0D;
+  --color-dark-surface: #1E2A1C;
+  --color-dark-variant: #2A3828;
+  --color-on-dark: #E0E8DC;
+
+  /* Semantic */
+  --color-error-red: #BA1A1A;
+  --color-error-red-light: #FFB4AB;
+
+  /* Macro colors — data visualization */
+  --color-calorie: #E8673C;
+  --color-protein: #2E8B7A;
+  --color-carbs: #D4A017;
+  --color-fat: #8E5BA2;
+
+  /* Background semantic shortcuts (updated by light/dark vars below) */
+  --color-app: var(--bg-app);
+  --color-surface: var(--bg-surface);
+  --color-surface-variant: var(--bg-surface-variant);
+
+  /* Border radius — organic rounded corners */
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-xl: 32px;
+
+  /* Font */
+  --font-outfit: var(--font-outfit-var), system-ui, sans-serif;
+
+  /* Typography scale — matching Android Type.kt */
+  --text-display-lg: 3.5625rem;
+  --text-headline-lg: 2rem;
+  --text-headline-md: 1.75rem;
+  --text-headline-sm: 1.5rem;
+  --text-title-lg: 1.375rem;
+  --text-title-md: 1rem;
+  --text-title-sm: 0.875rem;
+  --text-body-lg: 1rem;
+  --text-body-md: 0.875rem;
+  --text-body-sm: 0.75rem;
+  --text-label-lg: 0.875rem;
+  --text-label-md: 0.75rem;
+  --text-label-sm: 0.6875rem;
+}
+
+/* ─── Light theme — Forest & Cream ────────────────────────────────────── */
+:root {
+  --bg-app: #FEFBF3;
+  --bg-surface: #FFFFFF;
+  --bg-surface-variant: #EEF2E6;
+  --text-primary: #1A1C18;
+  --text-secondary: #3C4A37;
+  --border-outline: #C8C8BC;
+  --border-variant: #EEF2E6;
+}
+
+/* ─── Dark theme — Dark Forest ─────────────────────────────────────────── */
+.dark {
+  --bg-app: #0F1A0D;
+  --bg-surface: #1E2A1C;
+  --bg-surface-variant: #2A3828;
+  --text-primary: #E0E8DC;
+  --text-secondary: #A8D99C;
+  --border-outline: #3C4A37;
+  --border-variant: #2A3828;
+}
+
+/* ─── Base styles ───────────────────────────────────────────────────────── */
+body {
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-outfit);
+}

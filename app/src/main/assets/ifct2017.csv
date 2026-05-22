@@ -1,0 +1,181 @@
+code,name,energy_kcal,protein_g,fat_g,carbs_g,fiber_g
+G001,Rice raw,345,7.9,1.0,78.2,0.6
+G002,Rice cooked,130,2.7,0.3,28.1,0.3
+G003,Wheat flour atta,341,11.8,1.5,69.4,1.9
+G004,Roti chapati,297,9.5,3.7,54.0,2.3
+G005,Maida refined flour,348,11.0,0.9,73.9,0.4
+G006,Semolina suji rava,349,10.4,1.1,73.1,0.6
+G007,Poha flattened rice,346,7.8,1.0,77.5,0.9
+G008,Corn maize,342,8.8,3.9,66.2,2.0
+G009,Oats,390,13.2,6.9,65.9,10.0
+G010,Bajra pearl millet,361,11.6,5.0,67.5,1.2
+G011,Jowar sorghum,349,10.4,1.9,72.6,1.6
+G012,Ragi finger millet,328,7.7,1.5,72.0,3.6
+G013,Idli,146,4.5,0.5,30.5,0.7
+G014,Dosa,168,5.3,2.4,30.3,0.9
+G015,Upma,118,2.8,3.0,19.5,0.5
+G016,Puri,327,7.3,10.8,49.9,1.0
+G017,Paratha plain,280,8.0,8.5,43.5,1.5
+G018,Bread white,265,8.4,3.2,50.5,1.2
+G019,Bread whole wheat,247,9.8,3.1,43.5,3.5
+G020,Naan,310,9.0,8.0,50.0,1.2
+G021,Vada medu,220,8.5,12.0,22.0,2.5
+G022,Appam,145,3.5,1.5,30.0,0.5
+G023,Puttu,208,4.5,0.8,46.0,1.8
+G024,Pesarattu,180,9.5,4.0,28.0,2.2
+P001,Toor dal raw,343,22.3,1.7,57.6,5.2
+P002,Toor dal cooked,104,6.8,0.5,17.5,1.5
+P003,Moong dal raw,334,24.0,1.3,56.7,3.5
+P004,Moong dal cooked,111,7.6,0.4,19.0,1.1
+P005,Chana dal raw,372,20.8,5.6,59.8,5.4
+P006,Masoor dal red lentil raw,343,25.1,0.7,59.0,11.7
+P007,Urad dal raw,347,24.0,1.4,59.6,3.5
+P008,Rajma kidney beans raw,333,22.9,1.3,60.6,16.0
+P009,Chole chickpeas raw,360,17.1,5.3,60.5,8.0
+P010,Chole chickpeas cooked,164,8.9,2.6,27.4,7.6
+P011,Soybean raw,432,43.2,19.9,20.9,3.7
+P012,Moth beans raw,343,22.9,1.6,60.1,5.5
+P013,Cowpea lobia raw,323,23.4,1.8,54.5,10.8
+P014,Horse gram kulthi raw,321,22.0,0.5,57.2,5.5
+P015,Black eyed peas lobiya,116,7.7,0.4,20.8,5.5
+V001,Onion,40,1.2,0.1,9.2,1.7
+V002,Tomato,20,0.9,0.2,3.9,1.2
+V003,Potato,97,1.6,0.1,22.6,0.4
+V004,Spinach palak,26,2.0,0.7,2.9,0.6
+V005,Eggplant brinjal baingan,24,1.4,0.3,4.0,1.3
+V006,Okra bhindi ladies finger,35,1.8,0.2,6.4,3.2
+V007,Cauliflower phool gobi,30,2.6,0.4,4.0,2.1
+V008,Cabbage patta gobi,27,1.8,0.1,4.6,1.0
+V009,Carrot gajar,41,0.9,0.2,9.6,2.8
+V010,Green peas matar,81,5.4,0.4,14.3,5.0
+V011,French beans,26,1.7,0.1,4.5,3.2
+V012,Bitter gourd karela,17,1.0,0.2,3.0,2.8
+V013,Bottle gourd lauki,12,0.6,0.1,2.5,0.4
+V014,Ridge gourd turai,18,1.4,0.1,2.9,1.5
+V015,Colocasia arbi taro,97,3.0,0.1,21.1,1.0
+V016,Sweet potato shakarkand,119,1.6,0.3,28.2,3.0
+V017,Garlic lahsun,149,6.3,0.5,30.0,2.1
+V018,Ginger adrak,80,2.3,0.9,15.8,2.0
+V019,Cucumber kheera,13,0.7,0.1,2.5,0.5
+V020,Capsicum bell pepper shimla mirch,24,1.3,0.3,4.3,1.7
+V021,Radish mooli,17,0.8,0.1,3.5,1.6
+V022,Pumpkin kaddu,25,1.0,0.1,5.0,0.5
+V023,Fenugreek leaves methi,49,4.4,0.9,5.7,3.8
+V024,Drumstick moringa,26,2.5,0.1,3.7,2.2
+V025,Mushroom,43,3.3,1.0,4.3,1.0
+V026,Green chilli hari mirch,29,2.0,0.6,4.8,3.0
+V027,Curry leaves kadi patta,108,6.1,1.0,18.7,5.8
+V028,Coriander leaves dhania,23,2.3,0.5,3.7,2.0
+V029,Beetroot chukander,43,1.7,0.1,9.9,2.8
+V030,Turnip shalgam,29,0.9,0.2,6.0,1.9
+V031,Cluster beans guar,16,3.2,0.4,1.4,3.2
+V032,Pointed gourd parwal,20,2.0,0.3,2.2,3.0
+V033,Ash gourd petha,10,0.4,0.1,1.9,0.4
+V034,Snake gourd chichinda,18,1.5,0.3,2.6,0.9
+V035,Lotus stem kamal kakdi,74,2.7,0.1,16.3,4.9
+F001,Banana kela,116,1.4,0.3,27.0,0.5
+F002,Mango aam,74,0.6,0.4,16.9,1.6
+F003,Apple seb,59,0.2,0.5,13.4,2.0
+F004,Orange santara,53,0.9,0.3,11.4,1.7
+F005,Grapes angoor,71,0.5,0.3,16.5,2.5
+F006,Papaya papita,32,0.6,0.1,7.2,0.8
+F007,Guava amrood,51,0.9,0.3,11.2,5.2
+F008,Watermelon tarbuj,26,0.6,0.3,5.3,0.4
+F009,Pineapple ananas,46,0.5,0.1,10.9,1.4
+F010,Pomegranate anar,83,1.7,1.2,18.7,4.0
+F011,Coconut fresh nariyal,354,3.5,33.5,5.1,9.0
+F012,Lychee litchi,66,0.8,0.4,16.5,1.3
+F013,Jackfruit kathal,95,1.7,0.3,23.2,1.5
+F014,Sapota chikoo,94,0.7,1.1,21.4,5.3
+F015,Custard apple sitaphal,94,1.6,0.4,23.5,3.1
+F016,Amla Indian gooseberry,58,0.9,0.1,13.7,3.4
+F017,Dates khajoor dried,282,2.5,0.4,74.8,6.7
+F018,Fig anjeer fresh,37,1.3,0.2,8.8,2.9
+D001,Milk cow full fat,67,3.2,4.1,4.4,0.0
+D002,Milk toned,58,3.0,3.0,4.5,0.0
+D003,Curd yogurt dahi,60,3.1,4.0,3.0,0.0
+D004,Paneer cottage cheese,265,18.3,20.8,1.2,0.0
+D005,Ghee clarified butter,900,0.0,99.5,0.0,0.0
+D006,Butter makhan,729,0.6,81.0,0.5,0.0
+D007,Khoa mawa,421,19.8,31.2,15.3,0.0
+D008,Buttermilk chaas,15,0.9,0.5,1.7,0.0
+D009,Condensed milk sweetened,321,8.1,9.0,54.4,0.0
+D010,Skimmed milk powder,362,34.9,0.7,52.3,0.0
+D011,Ice cream vanilla,207,3.5,11.0,23.6,0.0
+M001,Chicken breast,165,31.0,3.6,0.0,0.0
+M002,Chicken whole with skin,215,18.6,15.1,0.0,0.0
+M003,Mutton goat meat,194,18.5,13.3,0.0,0.0
+M004,Egg whole hen,173,13.3,13.3,0.0,0.0
+M005,Egg white,52,10.9,0.2,0.7,0.0
+M006,Egg yolk,352,16.0,31.9,0.0,0.0
+M007,Rohu fish,97,16.6,2.6,0.0,0.0
+M008,Catla fish,112,19.0,3.5,0.0,0.0
+M009,Prawn shrimp,106,20.3,2.2,0.0,0.0
+M010,Sardine fish,186,21.1,11.0,0.0,0.0
+M011,Tuna fish,128,28.0,1.0,0.0,0.0
+M012,Pomfret fish,113,18.8,4.5,0.0,0.0
+M013,Hilsa ilish fish,217,21.8,14.0,0.0,0.0
+M014,Mackerel bangda,175,19.2,11.0,0.0,0.0
+M015,Liver chicken,165,24.5,6.9,0.9,0.0
+M016,Pork,242,16.9,19.2,0.0,0.0
+N001,Groundnuts peanuts,567,25.8,49.2,16.1,8.5
+N002,Almonds badam,579,21.2,49.9,21.7,12.5
+N003,Cashew kaju,553,18.2,43.9,30.2,3.3
+N004,Walnuts akhrot,654,15.2,65.2,13.7,6.7
+N005,Sesame seeds til,573,17.7,43.3,25.0,7.8
+N006,Flax seeds alsi,534,18.3,42.2,28.9,27.3
+N007,Sunflower seeds,584,20.8,51.5,20.0,8.6
+N008,Pistachios pista,557,20.6,44.4,27.7,10.3
+N009,Coconut dry copra,662,6.9,64.5,18.4,16.4
+O001,Sunflower oil,900,0.0,100.0,0.0,0.0
+O002,Mustard oil sarson,900,0.0,100.0,0.0,0.0
+O003,Coconut oil,900,0.0,100.0,0.0,0.0
+O004,Olive oil,884,0.0,100.0,0.0,0.0
+O005,Groundnut oil,900,0.0,100.0,0.0,0.0
+O006,Rice bran oil,900,0.0,100.0,0.0,0.0
+O007,Vanaspati dalda,900,0.0,100.0,0.0,0.0
+R001,Dal tadka,97,5.5,2.4,14.6,2.5
+R002,Dal makhani,145,6.8,6.7,16.0,3.2
+R003,Rajma curry,153,7.6,5.8,18.8,4.8
+R004,Chole masala,158,7.3,6.2,19.2,4.2
+R005,Palak paneer,173,8.7,12.8,5.8,1.8
+R006,Paneer butter masala,230,9.8,17.5,8.5,1.2
+R007,Aloo sabzi potato curry,98,2.1,3.5,15.4,1.5
+R008,Baingan bharta,72,1.9,3.8,8.0,2.8
+R009,Mix vegetable curry,85,2.5,4.2,10.0,2.5
+R010,Chicken biryani,190,10.5,7.5,22.0,0.8
+R011,Veg biryani,165,4.8,6.0,23.5,1.8
+R012,Sambar,63,3.8,1.9,8.5,2.2
+R013,Rasam,28,1.2,0.7,4.5,1.0
+R014,Khichdi,133,5.8,2.0,24.5,1.2
+R015,Butter chicken murgh makhani,192,13.5,12.5,6.2,0.8
+R016,Tandoori chicken,168,24.8,7.2,1.5,0.2
+R017,Chicken curry,175,18.5,9.8,4.2,0.5
+R018,Fish curry,142,15.2,7.5,5.0,0.5
+R019,Egg curry,165,10.8,12.0,4.2,0.3
+R020,Mutton curry,212,18.8,13.5,4.5,0.3
+R021,Samosa,262,4.8,13.5,32.5,1.5
+R022,Pakora vegetable bhajia,203,4.5,10.5,24.8,2.2
+R023,Bhel puri,122,3.2,3.5,19.5,1.8
+R024,Pav bhaji,162,4.5,6.5,22.8,2.5
+R025,Vada pav,230,6.5,8.5,33.0,1.8
+R026,Aloo tikki,185,4.2,8.0,25.5,2.0
+R027,Dahi vada,145,6.8,5.5,17.8,1.5
+R028,Chaat papdi,210,5.2,9.0,28.0,2.2
+S001,Sooji halwa,229,3.2,8.5,36.0,0.5
+S002,Gulab jamun,310,5.5,12.5,46.5,0.2
+S003,Besan ladoo,446,8.7,22.0,56.5,2.5
+S004,Kheer rice pudding,148,4.8,5.0,21.5,0.2
+S005,Jalebi,337,3.9,14.0,50.0,0.2
+S006,Rasogolla,186,4.1,4.8,34.5,0.0
+S007,Barfi milk sweet,395,8.5,18.5,52.5,0.0
+S008,Halwa moong dal,280,7.0,11.5,40.5,1.5
+S009,Payasam kheer,175,5.2,6.5,26.0,0.5
+S010,Gajar halwa carrot,183,3.5,9.5,23.5,1.8
+B001,Chai tea with milk and sugar,55,1.8,1.9,7.5,0.0
+B002,Coffee with milk and sugar,45,1.5,1.6,5.8,0.0
+B003,Lassi sweet,92,3.2,3.8,10.8,0.0
+B004,Lassi salted,52,2.8,2.5,4.5,0.0
+B005,Coconut water,19,0.7,0.2,3.7,1.1
+B006,Nimbu pani lemonade,30,0.3,0.0,7.5,0.2
+B007,Mango lassi,118,3.5,3.5,18.0,0.5

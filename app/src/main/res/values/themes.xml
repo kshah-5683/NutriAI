@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        NutriAI splash / window background theme.
+        Uses the warm cream color so the splash screen never flashes white
+        before Compose draws its first frame.
+        Status bar and navigation bar are set to match via windowLightStatusBar.
+    -->
+    <style name="Theme.NutriAI" parent="android:Theme.Material.Light.NoActionBar">
+        <!-- Warm cream splash / window background — matches LightColorScheme.background -->
+        <item name="android:windowBackground">@color/window_background</item>
+        <!-- Light status bar icons (dark icons on cream bg) -->
+        <item name="android:windowLightStatusBar">true</item>
+        <!-- Transparent bars let Compose draw edge-to-edge -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>
