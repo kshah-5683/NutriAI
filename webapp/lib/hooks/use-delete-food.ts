@@ -24,7 +24,6 @@ export function useDeleteFood() {
 
       const { error } = await supabase
         .from("food_items")
-        // @ts-expect-error — stub Database type resolves update payload as `never`
         .update({
           deleted_at: now,
           last_modified_at: now,

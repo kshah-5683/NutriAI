@@ -44,6 +44,7 @@ export type Database = {
           deleted_at?: number | null;
           updated_at?: string;
         };
+        Relationships: [];
       };
       food_items: {
         Row: {
@@ -95,6 +96,7 @@ export type Database = {
           deleted_at?: number | null;
           updated_at?: string;
         };
+        Relationships: [];
       };
       daily_logs: {
         Row: {
@@ -149,6 +151,7 @@ export type Database = {
           deleted_at?: number | null;
           updated_at?: string;
         };
+        Relationships: [];
       };
       user_preferences: {
         Row: {
@@ -176,6 +179,7 @@ export type Database = {
           fat_goal?: number;
           updated_at?: string;
         };
+        Relationships: [];
       };
       ifct_foods: {
         Row: {
@@ -206,10 +210,12 @@ export type Database = {
           carbs_g?: number;
           fiber_g?: number;
         };
+        Relationships: [];
       };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;
     Enums: Record<string, never>;
+    CompositeTypes: Record<string, never>;
   };
 };

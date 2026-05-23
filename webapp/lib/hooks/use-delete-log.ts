@@ -21,11 +21,8 @@ export function useDeleteLog() {
       const now = nowMs();
 
       // Guard: don't re-delete already-tombstoned rows.
-      // Stub Database type causes PostgREST to resolve payload as `never`.
-      // Will resolve when real types are generated via `supabase gen types typescript`.
       const { error } = await supabase
         .from("daily_logs")
-        // @ts-expect-error — stub Database type resolves update payload as `never`
         .update({
           deleted_at: now,
           last_modified_at: now,
