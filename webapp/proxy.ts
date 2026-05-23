@@ -3,14 +3,14 @@ import type { NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
 /**
- * Next.js middleware — auth session refresh + route protection.
+ * Next.js 16 Proxy — replaces middleware.ts.
  *
  * Responsibilities:
  * 1. Refresh the Supabase auth session on every request (keeps JWT alive)
  * 2. Redirect unauthenticated users to /auth/sign-in
  * 3. Redirect authenticated users away from /auth/* pages
  */
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(
@@ -25,6 +25,7 @@ export async function middleware(request: NextRequest) {
           cookiesToSet.forEach(({ name, value }) => {
             request.cookies.set(name, value);
           });
+          // Re-create the response so outgoing cookies are included
           response = NextResponse.next({ request });
           cookiesToSet.forEach(({ name, value, options }) => {
             response.cookies.set(name, value, options);
