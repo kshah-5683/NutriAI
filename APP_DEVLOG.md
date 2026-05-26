@@ -1671,6 +1671,34 @@ Goals set on webapp appeared on Android after pull. Goals set on Android appeare
 
 ---
 
+## Phase 15: Sign-Up Flow — Confirmation Before Sign-In
+
+**Status:** ✅ Completed
+**Date:** May 23, 2026
+
+### Summary
+
+Changed the sign-up success flow so users must explicitly sign in after creating an account, rather than being automatically navigated to the Home screen. After a successful `signUpUseCase` call, the app now shows an "Account created! Please sign in." snackbar and returns to the sign-in form. The user then signs in manually, which triggers the existing `NavigateToHome` + `SyncScheduler` path.
+
+Previously: Sign up → `NavigateToHome` event → Home screen (sync triggered immediately)
+Now: Sign up → `SignUpSuccess` event → snackbar + sign-in form → user signs in → Home screen
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `presentation/screens/auth/AuthViewModel.kt` | Updated | Added `AuthEvent.SignUpSuccess` to the sealed class. In `signUp()` success branch: replaced `NavigateToHome` event + `SyncScheduler.schedule()` + `syncDataUseCase()` with `SignUpSuccess` event only. Sync and scheduling now happen exclusively after sign-in. |
+| 2 | `presentation/screens/auth/AuthScreen.kt` | Updated | Added `AuthEvent.SignUpSuccess` branch in `LaunchedEffect(Unit)` event collector: shows "Account created! Please sign in." snackbar, then calls `viewModel.toggleSignUpMode()` to switch the form back to sign-in mode. No new composables needed. |
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| 58 | `SignUpSuccess` event separate from `NavigateToHome` | Sign-up and sign-in are distinct operations with different post-action behaviors. Sign-in should own `SyncScheduler.schedule()` and the initial `syncDataUseCase()` call — these require an active authenticated session. Triggering sync immediately after sign-up (before the user has explicitly signed in) is premature and could cause race conditions on accounts with no existing Supabase data. |
+| 59 | Return to sign-in form (not navigate to new screen) | The existing `AuthScreen` already has a sign-in form with the same email pre-fillable by the user. `toggleSignUpMode()` resets to sign-in view cleanly within the same screen — no new route, no additional navigation stack entry. |
+
+---
+
 ## Dev Environment Setup
 
 **Date:** April 27, 2026

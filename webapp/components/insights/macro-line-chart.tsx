@@ -9,6 +9,7 @@ import {
   Tooltip,
   Legend,
   ReferenceLine,
+  ResponsiveContainer,
 } from "recharts";
 import { MACRO_COLORS } from "@/lib/utils/constants";
 import type { DailyChartSummary } from "@/lib/types/insights";
@@ -46,8 +47,9 @@ export function MacroLineChart({ summaries, macroGoals }: MacroLineChartProps) {
   }));
 
   return (
-    <div className="w-full overflow-x-auto">
-      <LineChart width={500} height={260} data={filteredData} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
+    <div className="w-full">
+      <ResponsiveContainer width="100%" height={260}>
+      <LineChart data={filteredData} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="var(--border-variant)" />
         <XAxis
           dataKey="xLabel"
@@ -136,6 +138,7 @@ export function MacroLineChart({ summaries, macroGoals }: MacroLineChartProps) {
           activeDot={{ r: 4 }}
         />
       </LineChart>
+      </ResponsiveContainer>
     </div>
   );
 }

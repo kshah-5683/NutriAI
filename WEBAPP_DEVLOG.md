@@ -17,6 +17,10 @@
 - [Phase W3.5: Auth, RLS & Calculation Bugfixes](#phase-w35-auth-rls--calculation-bugfixes)
 - [Phase W4: Features + Polish](#phase-w4-features--polish)
 - [Phase W5: Cross-Platform Testing](#phase-w5-cross-platform-testing)
+- [Phase W6: Production Deployment](#phase-w6-production-deployment)
+- [Phase W7: Sign-Up Flow — Confirmation Before Sign-In](#phase-w7-sign-up-flow--confirmation-before-sign-in)
+- [Phase W7.5: Responsive Insight Charts](#phase-w75-responsive-insight-charts)
+- [Phase W8: Discrete Unit Macro Fix + Preview Card Correction](#phase-w8-discrete-unit-macro-fix--preview-card-correction)
 - [Architecture Decisions](#architecture-decisions)
 - [Known Issues & Tech Debt](#known-issues--tech-debt)
 
@@ -559,6 +563,200 @@ No bugs found. Webapp soft-delete propagated to Android via pull sync. Delete-wi
 **Bug W5-4 (Android):** Push DTO included `"updated_at": null` which violated the `NOT NULL` constraint on `user_preferences.updated_at`. Fixed with a separate push DTO excluding the server-managed column. No webapp changes needed.
 
 Goals set on webapp synced to Android via pull. Goals set on Android synced to webapp via push. Bidirectional confirmed. TC-33 **PASSED**.
+
+---
+
+## Phase W6: Production Deployment
+
+**Status:** ✅ Complete
+**Date:** May 23, 2026
+**Live URL:** https://nutri-ai-git-main-khushi-s-s-projects.vercel.app
+
+### Summary
+
+Pushed the NutriAI monorepo to GitHub (`github.com/kshah-5683/NutriAI`) and deployed the `webapp/` Next.js app to Vercel. Required resolving a chain of dependency, type, build, and Vercel configuration issues before the app was live.
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `webapp/.npmrc` | Created | `legacy-peer-deps=true` — suppresses npm peer dep conflicts (React 19 + older package declarations) |
+| 2 | `webapp/package.json` | Updated | Added `"engines": { "node": "20.x" }` to pin Node version on Vercel (was defaulting to Node 24 which caused silent npm crashes) |
+| 3 | `webapp/package.json` | Updated | Added `react-is: ^19.2.6` as a direct dependency — `recharts@3.8.1` declares `react-is` as a peer dep but does not install it automatically; webpack build failed with `Module not found: Can't resolve 'react-is'` |
+| 4 | `webapp/package.json` | Updated | Changed build script from `next build` to `next build --webpack` — Turbopack production output is not recognized by Vercel's edge routing layer (all routes return `NOT_FOUND`); webpack output deploys correctly |
+| 5 | `webapp/package-lock.json` | Committed | Committed lockfile to ensure Vercel uses `npm ci` for deterministic installs rather than bare `npm install` (which was silently OOM-crashing on Node 20.x) |
+| 6 | `webapp/lib/types/database.ts` | Updated | Added `Relationships: []` to every table definition and `CompositeTypes: Record<string, never>` to the public schema — required by `supabase-js` v2's internal `GenericSchema` type. Without these fields, supabase-js silently fell back to an untyped client and `.from("user_preferences")` returned `never`, breaking `use-macro-goals.ts` and `use-update-goals.ts` at TypeScript compile time |
+| 7 | `webapp/lib/hooks/use-delete-food.ts` | Updated | Removed `// @ts-expect-error` suppression — now unnecessary after `Relationships`/`CompositeTypes` fix; keeping it raised `TS2578: Unused '@ts-expect-error' directive` |
+| 8 | `webapp/lib/hooks/use-delete-log.ts` | Updated | Same as above |
+| 9 | `webapp/next.config.ts` | Updated | Added `serverExternalPackages: ["undici", "https-proxy-agent"]` — these packages use `node:` URI imports (e.g. `node:crypto`, `node:dns`, `node:console`) that webpack cannot resolve. Marking them as server externals tells webpack to leave them as native `require()` calls instead of bundling them. Without this, webpack produced `UnhandledSchemeError` for every `node:*` import in `undici` |
+| 10 | `webapp/proxy.ts` (diagnostic) | Temporary | Replaced auth guard with bare passthrough (`NextResponse.next()`) to isolate the edge 404 cause — confirmed the NOT_FOUND was independent of proxy code |
+| 11 | `webapp/proxy.ts` | Restored | Restored full auth guard (session refresh + unauthenticated redirect + auth-route redirect) after Vercel config was fixed |
+
+### Deployment Issue Chain (RCA)
+
+#### D1 — `npm install` silent crash on Vercel
+**Symptom:** Build fails at "Installing dependencies" with `npm error Exit handler never called!` after ~70s. No dependency error shown.
+**Root cause:** Vercel was defaulting to Node 24 which ships npm 10.x; a combination of React 19 peer dep conflicts + npm 10.x's dependency resolution caused npm's internal event loop to die before exit handlers ran.
+**Fix:** Pinned `engines.node = "20.x"` in `package.json`. Vercel respects this and switches its build container to Node 20 (where the same install completes in 23s locally).
+
+#### D2 — `react-is` missing at build time
+**Symptom:** Turbopack build error: `Module not found: Can't resolve 'react-is'` from `recharts/es6/util/ReactUtils.js`.
+**Root cause:** `recharts@3.8.1` lists `react-is` as a peer dependency but does not list it as a direct dependency. With `--legacy-peer-deps` the missing peer was ignored during install but the import was still expected at build time.
+**Fix:** Added `react-is: ^19.2.6` as a direct dependency.
+
+#### D3 — Turbopack production output gives `NOT_FOUND` on Vercel edge
+**Symptom:** Build succeeds (all routes present in build log); Vercel reports "Deployment completed"; but every URL returns Vercel's `404: NOT_FOUND` with no runtime logs generated.
+**Root cause:** Next.js 16 Turbopack production builds generate a routing manifest in a format that Vercel's edge routing layer does not yet fully support. The edge layer can't map the hostname to any function/static asset and returns `NOT_FOUND` before the request reaches the app.
+**Fix:** Switched build to `next build --webpack`. Webpack produces the established output format that Vercel's routing layer correctly processes.
+
+#### D4 — `undici` breaks webpack build
+**Symptom:** `next build --webpack` fails with multiple `UnhandledSchemeError: Reading from "node:crypto" is not handled by plugins` and similar errors for `node:console`, `node:dns`, `node:diagnostics_channel`, `string_decoder`.
+**Root cause:** `undici` (used by `instrumentation.ts` for Walmart corporate proxy support) uses Node.js built-in module references with the `node:` URI prefix. Webpack's resolver handles `data:` and `file:` URIs by default but not `node:`.
+**Fix:** Added `serverExternalPackages: ["undici", "https-proxy-agent"]` to `next.config.ts`. These packages are server-only and never need to be bundled; marking them as externals tells webpack to emit `require("undici")` calls instead of attempting to bundle the source.
+
+#### D5 — Supabase TypeScript `never` type errors blocking build
+**Symptom:** `npx tsc --noEmit` produces 5 errors: `Property 'calorie_goal' does not exist on type 'never'` in `use-macro-goals.ts` and `Object literal may only specify known properties, and 'user_id' does not exist in type 'never[]'` in `use-update-goals.ts`.
+**Root cause:** `supabase-js` v2's internal `GenericSchema` type requires every table to have a `Relationships` field and the public schema to have a `CompositeTypes` field. The stub `database.ts` was missing both. When supabase-js validates the `Database` generic against `GenericSchema` and finds a mismatch, it silently falls back to an untyped client — all `.from()` calls return `never`.
+**Fix:** Added `Relationships: []` to all five tables in `database.ts` and `CompositeTypes: Record<string, never>` to the public schema. This also fixed the pre-existing `@ts-expect-error` suppressions in `use-delete-food.ts` and `use-delete-log.ts` (those tables were affected by the same issue and are now correctly typed).
+
+#### D6 — Vercel Framework Preset set to "Other"
+**Symptom:** Despite correct root directory and successful build, Vercel's "Source" tab showed empty deployment; all URLs returned `NOT_FOUND`.
+**Root cause:** Vercel's Framework Preset was set to "Other" instead of "Next.js". With the wrong preset, Vercel does not set up Next.js-specific output routing, serverless function wiring, or CDN configuration — the build output is created but not wired to any serving infrastructure.
+**Fix:** Changed Framework Preset to "Next.js" in Vercel → Settings → Build and Deployment. Triggered redeploy. App became live immediately.
+
+### Vercel Final Configuration
+
+| Setting | Value |
+|---------|-------|
+| **Framework Preset** | Next.js |
+| **Root Directory** | `webapp` |
+| **Install Command** | `yarn install` |
+| **Build Command** | `next build --webpack` (overridden) |
+| **Node.js Version** | 20.x |
+| **`NEXT_PUBLIC_SUPABASE_URL`** | Supabase project URL (Production + Preview) |
+| **`NEXT_PUBLIC_SUPABASE_ANON_KEY`** | Supabase anon key (Production + Preview) |
+
+### Post-Deployment Supabase Auth Configuration
+
+- **Site URL:** `https://nutri-ai-git-main-khushi-s-s-projects.vercel.app`
+- **Redirect URLs:** `https://nutri-ai-git-main-khushi-s-s-projects.vercel.app/**`
+
+### Architecture Decisions (Phase W6)
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| W27 | `next build --webpack` for production | Turbopack production output is not recognized by Vercel's current edge routing layer. Webpack output is the established format Vercel supports. Dev server still uses Turbopack via `next dev`. |
+| W28 | `serverExternalPackages` for undici + https-proxy-agent | These packages are server-only and use `node:` URI imports webpack cannot resolve. Externals emit native `require()` calls; no bundling needed. |
+| W29 | `Relationships: []` + `CompositeTypes` in database.ts | Required by supabase-js v2's `GenericSchema` constraint. Without them, `Database` generic is silently rejected and all `.from()` calls become untyped (`never`). |
+| W30 | yarn install on Vercel | npm silently crashes during dependency install on Node 20.x for this project's dependency tree. yarn resolves all packages successfully in ~28s. |
+
+### Known Issues Added
+
+| # | Issue | Severity | Status |
+|---|-------|----------|--------|
+| 16 | `instrumentation.ts` Walmart proxy setup is dead code on Vercel — `HTTPS_PROXY` is never set in Vercel's environment | Low | Open — no impact on functionality; clean up when refactoring instrumentation |
+| 17 | `proxy.ts` naming is Next.js 16 convention; `next build --webpack` raises a deprecation warning ("middleware file convention is deprecated, use proxy instead") — both coexist but the warning is misleading | Low | Open — will resolve when Vercel supports Turbopack production output and `--webpack` flag is removed |
+
+---
+
+## Phase W7: Sign-Up Flow — Confirmation Before Sign-In
+
+**Status:** ✅ Completed
+**Date:** May 23, 2026
+
+### Summary
+
+Changed the sign-up success flow so users land on a confirmation screen before being redirected to sign-in, rather than going straight to the home dashboard. After `supabase.auth.signUp()` resolves without error, the form is replaced by a confirmation screen. A 2-second timer auto-redirects to `/auth/sign-in`; a manual "Sign in now →" link is available as an immediate fallback.
+
+Previously: Sign up → `router.push("/")` → Home (bypassed sign-in entirely)
+Now: Sign up → "Account created!" confirmation screen (2s) → `/auth/sign-in` → user signs in → Home
+
+Also deleted `webapp/app/auth/confirm/route.ts` — the PKCE email confirmation route handler is no longer needed now that email confirmation is disabled in Supabase (Authentication → Providers → Email → Confirm email: off).
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `webapp/app/auth/sign-up/page.tsx` | Updated | Added `useEffect` import. Added `success: boolean` state. On `signUp()` success: `setSuccess(true)` instead of `router.push("/")`. `useEffect` watches `success` — fires `router.push("/auth/sign-in")` after 2000 ms with cleanup to cancel if the component unmounts. Added `success` conditional render: ✅ icon + "Account created!" heading + "Redirecting you to sign in…" subtitle + "Sign in now →" manual link. |
+| 2 | `webapp/app/auth/confirm/route.ts` | Deleted | PKCE email confirmation callback route — no longer needed. Supabase "Confirm email" is disabled; no confirmation emails are sent and no code exchange is required. |
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| W31 | 2-second auto-redirect on sign-up success | Gives the user clear visual feedback that the account was created before moving on. Short enough not to feel like a delay; long enough to be readable. Manual "Sign in now →" link allows immediate navigation without waiting. |
+| W32 | Redirect to `/auth/sign-in`, not `/` | The sign-up action creates the account but does not establish a session (with email confirmation disabled, Supabase may return a session-less user). Redirecting to the sign-in form ensures the user explicitly authenticates and that `proxy.ts` finds a valid JWT before allowing access to the dashboard. |
+
+---
+
+## Phase W7.5: Responsive Insight Charts
+
+**Status:** ✅ Completed
+**Date:** May 26, 2026
+
+### Summary
+
+All three Recharts-based Insights page charts used hardcoded `width={500}` which caused horizontal scrolling on viewports narrower than 500px. Replaced with Recharts' `ResponsiveContainer` so charts scale to fill their parent container width. Android's Canvas-based charts were already fully responsive.
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `components/insights/macro-bar-chart.tsx` | Updated | Added `ResponsiveContainer` import. Wrapped `<BarChart>` in `<ResponsiveContainer width="100%" height={250}>`. Removed `width={500}` from `BarChart`. Changed outer `<div>` from `overflow-x-auto` to `w-full`. |
+| 2 | `components/insights/macro-line-chart.tsx` | Updated | Same pattern — `<LineChart width={500} height={260}>` → `<ResponsiveContainer width="100%" height={260}>` wrapping `<LineChart>`. Removed `overflow-x-auto`. |
+| 3 | `components/insights/macro-year-chart.tsx` | Updated | Same pattern — `<BarChart width={500} height={250}>` → `<ResponsiveContainer width="100%" height={250}>` wrapping `<BarChart>`. Removed `overflow-x-auto`. |
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| W33 | `ResponsiveContainer` over fixed `width` for all Recharts charts | Recharts SVG charts do not auto-size. `ResponsiveContainer` measures the parent DOM element's width on mount and resize, then passes it to the chart. Fixed heights (250–260px) are kept because the parent has no explicit height for the container to inherit. This matches Android's `Canvas(Modifier.fillMaxWidth().height(200.dp))` pattern. |
+
+---
+
+## Phase W8: Discrete Unit Macro Fix + Preview Card Correction
+
+**Status:** ✅ Completed
+**Date:** May 26, 2026
+
+### Summary
+
+Two related macro calculation bugs on the webapp Log page:
+
+1. **Discrete unit inflation** — "1 piece boiled egg" logged 155 kcal (full per-100g) instead of ~78 kcal. The `lookup-nutrition` Edge Function (via `fdc-mapper.ts`) returned `servingWeightG: 50` from USDA FDC, but the webapp type didn't declare the field and no code used it. Fixed by adding `servingWeightG` to `NutritionInfo` and pre-scaling macros from per-100g to per-unit in `acceptParsedFood()` when the unit is discrete (piece/slice/bowl) and `servingWeightG` is known. Port of Android Phase 12 fix.
+
+2. **Preview card wrong for all non-serving units** — `MacroPreviewCard` did raw `base × quantity` multiplication. For gram units (200g chicken, 155 kcal/100g) this showed `155 × 200 = 31,000 kcal` instead of `155 × 2.0 = 310 kcal`. Same bug for cup/tbsp/tsp units. The saved data was always correct (Edge Function uses `computeServingMultiplier()`), but the live preview was wrong. Fixed by using `computeServingMultiplier()` in the preview card.
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `lib/types/ai.ts` | Updated | Added `servingWeightG: number \| null` to `NutritionInfo` interface with JSDoc. Already returned by `lookup-nutrition` Edge Function — was silently dropped because the type didn't declare it. |
+| 2 | `lib/stores/log-form-store.ts` | Updated | `acceptParsedFood()`: detects discrete units (piece/slice/bowl); when `nutrition.servingWeightG` is available, pre-scales macros from per-100g to per-unit (`per100g × servingWeightG / 100`). Updates `servingG` to match. Non-discrete units unchanged. |
+| 3 | `components/macro-preview-card.tsx` | Updated | Added `unit` prop (defaults to `"serving"`). Replaced `base × quantity` with `base × computeServingMultiplier(quantity, unit)`. Updated label from static `"Total for X serving(s)"` to context-aware `"Total for 200g"` / `"Total for 2 cups"` / `"Total for 1 piece"`. Added `computeServingMultiplier` and `isGramUnit` imports. |
+| 4 | `components/manual-input-section.tsx` | Updated | Passes `unit` prop to `<MacroPreviewCard>`. Changed static `"Nutrition per 100g"` label to dynamic: `"Nutrition per piece/slice/bowl"` for discrete units, `"Nutrition per 100g"` for all others. |
+
+### Calculation Correctness — Before / After
+
+| Scenario | Preview Before | Preview After | Saved (unchanged) |
+|----------|---------------|--------------|-------------------|
+| "1 piece boiled egg" (FDC `servingWeightG=50`) | 155 kcal ❌ | ~78 kcal ✅ | ~78 kcal ✅ (after pre-scale) |
+| "200g chicken" (155 kcal/100g) | 31,000 kcal ❌ | 310 kcal ✅ | 310 kcal ✅ |
+| "2 cups oats" (379 kcal/100g) | 758 kcal ❌ | 1,818 kcal ✅ | 1,818 kcal ✅ |
+| "2 servings rice" (130 kcal/100g) | 260 kcal ✅ | 260 kcal ✅ | 260 kcal ✅ |
+| "1 tbsp olive oil" (884 kcal/100g) | 884 kcal ❌ | 133 kcal ✅ | 133 kcal ✅ |
+
+### Known Limitation
+
+IFCT-sourced foods never report `servingWeightG` (always null). Discrete units for IFCT foods still use the 100g-per-unit assumption. Same known limitation as Android (Known Issue #40). Workaround: switch unit to "g" and enter actual gram weight.
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| W34 | Pre-scale macros in `acceptParsedFood()`, not in Edge Function | Matches Android Phase 12 pattern. Pre-scaling converts per-100g to per-unit at accept time so the form, preview, and save all work with the same base values. No Edge Function API change needed — `computeServingMultiplier("piece")` returns raw quantity (1.0), and `total = perUnit × 1 = perUnit` is correct. |
+| W35 | `computeServingMultiplier()` in `MacroPreviewCard` (not raw multiplication) | The preview must mirror the server-side calculation exactly. Raw `base × quantity` was only correct for serving units. Using the same multiplier function ensures the preview matches what gets stored. |
+| W36 | Dynamic "Nutrition per X" label based on unit | After pre-scaling, discrete unit form fields hold per-unit values (not per-100g). The label must reflect this so users know what the macro numbers represent. For non-discrete units, macros remain per-100g. |
 
 ---
 

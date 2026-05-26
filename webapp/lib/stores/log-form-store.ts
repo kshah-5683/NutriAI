@@ -117,6 +117,10 @@ export const useLogFormStore = create<LogFormState>((set, get) => ({
   /**
    * Copies a parsed food into the manual form and switches to Manual tab.
    * If nutrition was resolved, pre-fills macros. Otherwise leaves them empty.
+   *
+   * For discrete units (piece, slice, bowl) with a known servingWeightG,
+   * macros are pre-scaled from per-100g to per-unit so that the preview
+   * and save paths produce correct totals. Matches Android Phase 12 fix.
    */
   acceptParsedFood: (index) => {
     const state = get();
@@ -125,17 +129,26 @@ export const useLogFormStore = create<LogFormState>((set, get) => ({
 
     const nutrition = state.nutritionResults[food.name] ?? null;
 
+    // Discrete units where servingWeightG enables per-unit pre-scaling
+    const discreteUnits = ["piece", "pieces", "slice", "slices", "bowl", "bowls"];
+    const isDiscrete = discreteUnits.includes(food.unit.toLowerCase().trim());
+    const swg = nutrition?.servingWeightG;
+    const shouldPreScale = isDiscrete && swg != null && swg > 0;
+
+    // Pre-scale factor: converts per-100g → per-unit (e.g. 50g egg → 0.5)
+    const scale = shouldPreScale ? swg / 100 : 1;
+
     set({
       inputMode: "manual",
       foodName: food.name,
       brand: "",
       quantity: String(food.quantity),
       unit: food.unit,
-      servingG: nutrition ? "100" : "100",
-      calories: nutrition ? String(Math.round(nutrition.caloriesPer100g)) : "",
-      protein: nutrition ? String(Math.round(nutrition.proteinPer100g * 10) / 10) : "",
-      carbs: nutrition ? String(Math.round(nutrition.carbsPer100g * 10) / 10) : "",
-      fat: nutrition ? String(Math.round(nutrition.fatPer100g * 10) / 10) : "",
+      servingG: shouldPreScale ? String(Math.round(swg)) : "100",
+      calories: nutrition ? String(Math.round(nutrition.caloriesPer100g * scale * 10) / 10) : "",
+      protein: nutrition ? String(Math.round(nutrition.proteinPer100g * scale * 10) / 10) : "",
+      carbs: nutrition ? String(Math.round(nutrition.carbsPer100g * scale * 10) / 10) : "",
+      fat: nutrition ? String(Math.round(nutrition.fatPer100g * scale * 10) / 10) : "",
     });
   },
 

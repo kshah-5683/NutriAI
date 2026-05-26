@@ -2,6 +2,8 @@
 
 import { MACRO_COLORS } from "@/lib/utils/constants";
 import { formatMacro } from "@/lib/utils/format";
+import { computeServingMultiplier } from "@/lib/utils/macro-calculator";
+import { isGramUnit } from "@/lib/utils/unit-converter";
 
 interface MacroPreviewCardProps {
   calories: number;
@@ -9,11 +11,13 @@ interface MacroPreviewCardProps {
   carbs: number;
   fat: number;
   quantity: number;
+  /** Unit string — used for correct multiplier calculation. Defaults to "serving". */
+  unit?: string;
 }
 
 /**
  * Live-computed macro totals preview card.
- * Shows total = base_macro * quantity in real-time.
+ * Uses computeServingMultiplier() for correct scaling across all unit types.
  * Color-coded badges matching MACRO_COLORS.
  */
 export function MacroPreviewCard({
@@ -22,13 +26,20 @@ export function MacroPreviewCard({
   carbs,
   fat,
   quantity,
+  unit = "serving",
 }: MacroPreviewCardProps) {
+  const multiplier = computeServingMultiplier(quantity, unit);
   const total = {
-    calories: calories * quantity,
-    protein: protein * quantity,
-    carbs: carbs * quantity,
-    fat: fat * quantity,
+    calories: calories * multiplier,
+    protein: protein * multiplier,
+    carbs: carbs * multiplier,
+    fat: fat * multiplier,
   };
+
+  // Context-aware label: "Total for 200g" / "Total for 2 cups" / "Total for 1 piece"
+  const qtyLabel = isGramUnit(unit)
+    ? `${formatMacro(quantity)}${unit}`
+    : `${formatMacro(quantity)} ${unit}${quantity !== 1 ? "s" : ""}`;
 
   return (
     <div
@@ -39,7 +50,7 @@ export function MacroPreviewCard({
       }}
     >
       <div className="mb-2 text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
-        Total for {formatMacro(quantity)} serving{quantity !== 1 ? "s" : ""}
+        Total for {qtyLabel}
       </div>
       <div className="flex items-center gap-3">
         <MacroBadge

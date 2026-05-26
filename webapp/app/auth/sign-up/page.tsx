@@ -1,15 +1,24 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 
 export default function SignUpPage() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const [success, setSuccess] = useState(false);
+
+  // After showing the confirmation screen, auto-redirect to sign-in after 2s
+  useEffect(() => {
+    if (!success) return;
+    const timer = setTimeout(() => router.push("/auth/sign-in"), 2000);
+    return () => clearTimeout(timer);
+  }, [success, router]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -38,25 +47,23 @@ export default function SignUpPage() {
     }
 
     setSuccess(true);
-    setPending(false);
   }
 
   if (success) {
     return (
       <div className="w-full max-w-sm text-center">
-        <div className="mb-4 text-4xl">📧</div>
+        <div className="mb-4 text-5xl">✅</div>
         <h2 className="mb-2 text-xl font-semibold" style={{ color: "var(--text-primary)" }}>
-          Check your email
+          Account created!
         </h2>
         <p className="mb-6 text-sm" style={{ color: "var(--text-secondary)" }}>
-          We&apos;ve sent a confirmation link to your email address.
-          Click the link to activate your account.
+          Redirecting you to sign in…
         </p>
         <Link
           href="/auth/sign-in"
           className="text-sm font-medium text-primary hover:underline"
         >
-          Back to Sign In
+          Sign in now →
         </Link>
       </div>
     );

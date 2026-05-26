@@ -46,6 +46,13 @@ export interface NutritionInfo {
   fiberPer100g: number | null;
   source: "USDA FoodData Central" | "IFCT 2017" | string;
   externalId: string | null;
+  /**
+   * Gram weight of a single discrete serving unit (piece, slice, bowl).
+   * Extracted from FDC servingSize when servingSizeUnit is "g".
+   * Used to pre-scale per-100g macros to per-unit values for discrete units.
+   * Null when FDC does not report a gram-based serving size or for IFCT foods.
+   */
+  servingWeightG: number | null;
 }
 
 /**

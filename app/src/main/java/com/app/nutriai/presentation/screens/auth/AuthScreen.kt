@@ -97,6 +97,11 @@ fun AuthScreen(
         viewModel.events.collect { event ->
             when (event) {
                 is AuthEvent.NavigateToHome -> onNavigateToHome()
+                is AuthEvent.SignUpSuccess -> {
+                    // Show confirmation snackbar then return to sign-in form
+                    snackbarHostState.showSnackbar("Account created! Please sign in.")
+                    viewModel.toggleSignUpMode()
+                }
             }
         }
     }

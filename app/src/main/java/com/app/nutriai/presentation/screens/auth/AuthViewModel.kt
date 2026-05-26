@@ -75,8 +75,11 @@ data class AuthUiState(
 // ─────────────────────────────────────────────
 
 sealed class AuthEvent {
-    /** Navigate to the Home screen after successful sign-in/sign-up. */
+    /** Navigate to the Home screen after successful sign-in. */
     data object NavigateToHome : AuthEvent()
+
+    /** Sign-up completed — UI should show confirmation and return to sign-in form. */
+    data object SignUpSuccess : AuthEvent()
 }
 
 // ─────────────────────────────────────────────
@@ -171,9 +174,9 @@ class AuthViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
             when (val result = signUpUseCase(state.email, state.password, state.confirmPassword)) {
                 is Resource.Success -> {
-                    SyncScheduler.schedule(appContext)
-                    launch { syncDataUseCase() }
-                    _events.send(AuthEvent.NavigateToHome)
+                    // Sign-up only creates the account — user must sign in separately.
+                    // SyncScheduler and initial sync run after sign-in (not here).
+                    _events.send(AuthEvent.SignUpSuccess)
                 }
                 is Resource.Error -> {
                     _uiState.update { it.copy(errorMessage = result.message) }

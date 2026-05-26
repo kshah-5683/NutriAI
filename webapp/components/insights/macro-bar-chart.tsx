@@ -1,6 +1,6 @@
 "use client";
 
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine, ResponsiveContainer } from "recharts";
 import { MACRO_COLORS } from "@/lib/utils/constants";
 import type { DailyChartSummary } from "@/lib/types/insights";
 import type { MacroGoals } from "@/lib/types/domain";
@@ -28,8 +28,9 @@ export function MacroBarChart({ summaries, macroGoals }: MacroBarChartProps) {
   const yMax = Math.ceil(Math.max(dataMax, goalMax, 50) * 1.1);
 
   return (
-    <div className="w-full overflow-x-auto">
-      <BarChart width={500} height={250} data={summaries} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
+    <div className="w-full">
+      <ResponsiveContainer width="100%" height={250}>
+      <BarChart data={summaries} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="var(--border-variant)" />
         <XAxis
           dataKey="label"
@@ -90,6 +91,7 @@ export function MacroBarChart({ summaries, macroGoals }: MacroBarChartProps) {
         <Bar dataKey="totalCarbs" name="Carbs" fill={MACRO_COLORS.carbs} radius={[2, 2, 0, 0]} barSize={12} />
         <Bar dataKey="totalFat" name="Fat" fill={MACRO_COLORS.fat} radius={[2, 2, 0, 0]} barSize={12} />
       </BarChart>
+      </ResponsiveContainer>
     </div>
   );
 }

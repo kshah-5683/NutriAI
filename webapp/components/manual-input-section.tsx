@@ -118,10 +118,12 @@ export function ManualInputSection() {
         </div>
       </div>
 
-      {/* Macros — per serving */}
+      {/* Macros — label adapts to unit type */}
       <div>
         <div className="mb-2 text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
-          Nutrition per 100g
+          {["piece", "slice", "bowl"].includes(unit.toLowerCase())
+            ? `Nutrition per ${unit}`
+            : "Nutrition per 100g"}
         </div>
         <div className="grid grid-cols-2 gap-3">
           <Input
@@ -165,6 +167,7 @@ export function ManualInputSection() {
         carbs={numCarbs}
         fat={numFat}
         quantity={numQty}
+        unit={unit}
       />
 
       {/* Error banner */}
