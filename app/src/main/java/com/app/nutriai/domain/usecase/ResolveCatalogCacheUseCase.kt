@@ -63,9 +63,15 @@ class ResolveCatalogCacheUseCase @Inject constructor(
                     matchedFoodItem = recipeMatch
                 )
             } else {
-                // Flat item: resolve against the Ingredients catalog
-                val match = foodRepository.searchFoodByNameExact(
+                // Flat item: resolve against the Ingredients catalog first,
+                // then fall back to Recipes catalog — Gemini sometimes marks
+                // a saved recipe as isRecipe=false, which would otherwise miss
+                // the catalog hit and trigger a redundant USDA lookup.
+                val ingredientMatch = foodRepository.searchFoodByNameExact(
                     parsed.name, Constants.INGREDIENT_CATALOG_ID
+                )
+                val match = ingredientMatch ?: foodRepository.searchFoodByNameExact(
+                    parsed.name, Constants.RECIPE_CATALOG_ID
                 )
                 CatalogMatch(
                     parsedFood = parsed,

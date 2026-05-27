@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { CatalogFoodCard } from "@/components/catalog-food-card";
 import { EditFoodSheet } from "@/components/edit-food-sheet";
 import { ConfirmDeleteFoodDialog } from "@/components/confirm-delete-food-dialog";
 import { useCatalogItems } from "@/lib/hooks/use-catalog-items";
 import { useCatalogStore, type CatalogTab } from "@/lib/stores/catalog-store";
+import { useLogFormStore } from "@/lib/stores/log-form-store";
 import { getIngredientCatalogId, getRecipeCatalogId } from "@/lib/utils/constants";
 import { useSupabase } from "@/components/providers/supabase-provider";
 
@@ -22,6 +24,7 @@ const TABS: { key: CatalogTab; label: string; icon: string }[] = [
  */
 export default function CatalogPage() {
   const supabase = useSupabase();
+  const router = useRouter();
   const [userId, setUserId] = useState<string | null>(null);
 
   const selectedTab = useCatalogStore((s) => s.selectedTab);
@@ -32,6 +35,20 @@ export default function CatalogPage() {
   const setSearchQuery = useCatalogStore((s) => s.setSearchQuery);
   const setEditingFood = useCatalogStore((s) => s.setEditingFood);
   const setDeletingFood = useCatalogStore((s) => s.setDeletingFood);
+
+  const setInputMode = useLogFormStore((s) => s.setInputMode);
+  const toggleRecipeMode = useLogFormStore((s) => s.toggleRecipeMode);
+
+  /** Pre-set the log form store before navigating so the correct mode is active on arrival. */
+  const handleAddClick = () => {
+    if (selectedTab === "recipes") {
+      setInputMode("manual");
+      toggleRecipeMode(true);
+    } else {
+      toggleRecipeMode(false);
+    }
+    router.push("/log");
+  };
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -166,8 +183,8 @@ export default function CatalogPage() {
 
       {/* FAB — add new item via log page */}
       <div className="fixed bottom-20 right-4 z-10">
-        <a
-          href="/log"
+        <button
+          onClick={handleAddClick}
           className="flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-transform hover:scale-105 active:scale-95"
           style={{ backgroundColor: "var(--color-primary)", color: "#FFFFFF" }}
           aria-label={`Add ${selectedTab === "recipes" ? "recipe" : "ingredient"}`}
@@ -181,7 +198,7 @@ export default function CatalogPage() {
               strokeLinejoin="round"
             />
           </svg>
-        </a>
+        </button>
       </div>
 
       {/* Edit + Delete modals */}

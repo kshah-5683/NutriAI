@@ -8,6 +8,8 @@
  * Port of LogViewModel.computeServingMultiplier() from Android.
  */
 
+import type { ManualRecipeIngredient } from "@/lib/stores/log-form-store";
+
 /** Per-100g base constant (food-label convention) */
 export const PER_100G_BASE = 100.0;
 
@@ -39,6 +41,72 @@ export function computeServingMultiplier(
     default:
       return quantity; // serving, piece, slice, bowl — treated as 1:1
   }
+}
+
+/**
+ * Returns the scaled macros for a single ingredient row.
+ * Multiplies base macros (per-100g or per-unit) by computeServingMultiplier(qty, unit).
+ * Used to display per-row macro badges with quantity prefix.
+ *
+ * Skips rows with no name (catalog item and no customName) — returns all zeros.
+ */
+export function scaleIngredientMacros(ingredient: ManualRecipeIngredient): {
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+} {
+  const hasName =
+    ingredient.catalogItem !== null || ingredient.customName.trim().length > 0;
+  if (!hasName) return { calories: 0, protein: 0, carbs: 0, fat: 0 };
+
+  const baseCal =
+    ingredient.catalogItem?.baseCalories ?? (parseFloat(ingredient.calories) || 0);
+  const baseProt =
+    ingredient.catalogItem?.baseProtein ?? (parseFloat(ingredient.protein) || 0);
+  const baseCarb =
+    ingredient.catalogItem?.baseCarbs ?? (parseFloat(ingredient.carbs) || 0);
+  const baseFat =
+    ingredient.catalogItem?.baseFat ?? (parseFloat(ingredient.fat) || 0);
+
+  const qty = parseFloat(ingredient.quantity) || 0;
+  const multiplier = computeServingMultiplier(qty, ingredient.unit);
+
+  return {
+    calories: Math.round(baseCal * multiplier * 10) / 10,
+    protein: Math.round(baseProt * multiplier * 10) / 10,
+    carbs: Math.round(baseCarb * multiplier * 10) / 10,
+    fat: Math.round(baseFat * multiplier * 10) / 10,
+  };
+}
+
+/**
+ * Aggregates macros across all ingredient rows, scaling each by its quantity/unit.
+ * Returns the total macros representing 1 serving of the recipe.
+ *
+ * Rows with no name (empty rows) are skipped.
+ * This result is the per-serving total passed to MacroPreviewCard (which further
+ * scales by recipe-level quantity for the daily log total preview).
+ *
+ * CRITICAL: These same pre-scaled per-ingredient values must be sent to the
+ * log-recipe Edge Function in matchedFoodItem.base_* so the server-side direct
+ * sum produces the correct recipe total. See plan section 6 for details.
+ */
+export function aggregateIngredientMacros(
+  ingredients: ManualRecipeIngredient[]
+): { calories: number; protein: number; carbs: number; fat: number } {
+  return ingredients.reduce(
+    (acc, ing) => {
+      const scaled = scaleIngredientMacros(ing);
+      return {
+        calories: acc.calories + scaled.calories,
+        protein: acc.protein + scaled.protein,
+        carbs: acc.carbs + scaled.carbs,
+        fat: acc.fat + scaled.fat,
+      };
+    },
+    { calories: 0, protein: 0, carbs: 0, fat: 0 }
+  );
 }
 
 /**

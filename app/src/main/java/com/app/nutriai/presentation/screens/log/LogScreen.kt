@@ -68,11 +68,14 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -94,8 +97,13 @@ import com.app.nutriai.presentation.theme.CarbsColor
 import com.app.nutriai.presentation.theme.FatColor
 import com.app.nutriai.presentation.theme.NutriAiTheme
 import com.app.nutriai.presentation.theme.ProteinColor
+import com.app.nutriai.domain.model.FoodItem
 import com.app.nutriai.util.Constants
+import com.app.nutriai.util.UnitConverter
+import com.app.nutriai.util.formatMacro
 import com.app.nutriai.util.formatQuantity
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlin.math.roundToInt
 
 /**
@@ -301,7 +309,20 @@ fun LogScreen(
                         onCarbsChange = viewModel::updateCarbs,
                         onFatChange = viewModel::updateFat,
                         onSaveClick = viewModel::saveLog,
-                        onIsLoggingRecipeChange = viewModel::toggleIsLoggingRecipe
+                        onIsLoggingRecipeChange = viewModel::toggleIsLoggingRecipe,
+                        // Recipe builder callbacks
+                        onAddIngredient = viewModel::addManualIngredient,
+                        onRemoveIngredient = viewModel::removeManualIngredient,
+                        onUpdateIngredientName = viewModel::updateManualIngredientName,
+                        onUpdateIngredientQuantity = viewModel::updateManualIngredientQuantity,
+                        onUpdateIngredientUnit = viewModel::updateManualIngredientUnit,
+                        onUpdateIngredientMacro = viewModel::updateManualIngredientMacro,
+                        onSelectCatalogItem = viewModel::selectCatalogItemForIngredient,
+                        onClearCatalogItem = viewModel::clearCatalogItemForIngredient,
+                        onUpdateRecipeServingQuantity = viewModel::updateRecipeServingQuantity,
+                        onUpdateRecipeServingUnit = viewModel::updateRecipeServingUnit,
+                        onSaveRecipeClick = viewModel::saveManualRecipe,
+                        searchCatalog = viewModel::searchIngredientCatalog
                     )
                 }
             }
@@ -1295,6 +1316,19 @@ private fun ManualInputSection(
     onFatChange: (String) -> Unit,
     onSaveClick: () -> Unit,
     onIsLoggingRecipeChange: (Boolean) -> Unit = {},
+    // Recipe builder callbacks
+    onAddIngredient: () -> Unit = {},
+    onRemoveIngredient: (String) -> Unit = {},
+    onUpdateIngredientName: (String, String) -> Unit = { _, _ -> },
+    onUpdateIngredientQuantity: (String, String) -> Unit = { _, _ -> },
+    onUpdateIngredientUnit: (String, String) -> Unit = { _, _ -> },
+    onUpdateIngredientMacro: (String, String, String) -> Unit = { _, _, _ -> },
+    onSelectCatalogItem: (String, FoodItem) -> Unit = { _, _ -> },
+    onClearCatalogItem: (String) -> Unit = {},
+    onUpdateRecipeServingQuantity: (String) -> Unit = {},
+    onUpdateRecipeServingUnit: (String) -> Unit = {},
+    onSaveRecipeClick: () -> Unit = {},
+    searchCatalog: (String) -> Flow<List<FoodItem>> = { kotlinx.coroutines.flow.flowOf(emptyList()) },
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
@@ -1361,153 +1395,258 @@ private fun ManualInputSection(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Quantity and Unit row
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            OutlinedTextField(
-                value = uiState.quantity,
-                onValueChange = onQuantityChange,
-                label = { Text("Quantity *") },
-                modifier = Modifier.weight(1f),
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+        if (uiState.isLoggingRecipe) {
+            // ── Recipe builder mode ──────────────────────────────────────────
+            ManualRecipeIngredientsSection(
+                uiState = uiState,
+                searchCatalog = searchCatalog,
+                onAddIngredient = onAddIngredient,
+                onRemoveIngredient = onRemoveIngredient,
+                onUpdateIngredientName = onUpdateIngredientName,
+                onUpdateIngredientQuantity = onUpdateIngredientQuantity,
+                onUpdateIngredientUnit = onUpdateIngredientUnit,
+                onUpdateIngredientMacro = onUpdateIngredientMacro,
+                onSelectCatalogItem = onSelectCatalogItem,
+                onClearCatalogItem = onClearCatalogItem,
+                onUpdateRecipeServingQuantity = onUpdateRecipeServingQuantity,
+                onUpdateRecipeServingUnit = onUpdateRecipeServingUnit
             )
 
-            // Unit dropdown
-            Box(modifier = Modifier.weight(1f)) {
-                OutlinedTextField(
-                    value = uiState.unit,
-                    onValueChange = {},
-                    label = { Text("Unit") },
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Aggregated macro preview (totals for the stated number of servings)
+            val recipeCalories = uiState.manualRecipeIngredients.sumOf { r ->
+                val q = r.quantity.toDoubleOrNull() ?: 0.0
+                val m = UnitConverter.computeServingMultiplier(q, r.unit)
+                (r.catalogItem?.baseCalories ?: r.calories.toDoubleOrNull() ?: 0.0) * m
+            }
+            val recipeProtein = uiState.manualRecipeIngredients.sumOf { r ->
+                val q = r.quantity.toDoubleOrNull() ?: 0.0
+                val m = UnitConverter.computeServingMultiplier(q, r.unit)
+                (r.catalogItem?.baseProtein ?: r.protein.toDoubleOrNull() ?: 0.0) * m
+            }
+            val recipeCarbs = uiState.manualRecipeIngredients.sumOf { r ->
+                val q = r.quantity.toDoubleOrNull() ?: 0.0
+                val m = UnitConverter.computeServingMultiplier(q, r.unit)
+                (r.catalogItem?.baseCarbs ?: r.carbs.toDoubleOrNull() ?: 0.0) * m
+            }
+            val recipeFat = uiState.manualRecipeIngredients.sumOf { r ->
+                val q = r.quantity.toDoubleOrNull() ?: 0.0
+                val m = UnitConverter.computeServingMultiplier(q, r.unit)
+                (r.catalogItem?.baseFat ?: r.fat.toDoubleOrNull() ?: 0.0) * m
+            }
+            val servingQty = uiState.recipeServingQuantity.toDoubleOrNull() ?: 1.0
+
+            if (recipeCalories > 0) {
+                Card(
                     modifier = Modifier.fillMaxWidth(),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = "Total (${servingQty.formatQuantity()} × ${uiState.recipeServingUnit})",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            MacroPreviewItem("Cal", "${(recipeCalories * servingQty).roundToInt()}", CalorieColor)
+                            MacroPreviewItem("Protein", "${(recipeProtein * servingQty).roundToInt()}g", ProteinColor)
+                            MacroPreviewItem("Carbs", "${(recipeCarbs * servingQty).roundToInt()}g", CarbsColor)
+                            MacroPreviewItem("Fat", "${(recipeFat * servingQty).roundToInt()}g", FatColor)
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            // Error message
+            if (uiState.errorMessage != null) {
+                Text(
+                    text = uiState.errorMessage,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+            }
+
+            // Save button
+            Button(
+                onClick = onSaveRecipeClick,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = uiState.isValid && !uiState.isSaving
+            ) {
+                if (uiState.isSaving) {
+                    CircularProgressIndicator(
+                        modifier = Modifier
+                            .height(20.dp)
+                            .width(20.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                } else {
+                    Text(saveButtonLabel)
+                }
+            }
+
+        } else {
+            // ── Flat ingredient mode ─────────────────────────────────────────
+
+            // Quantity and Unit row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = uiState.quantity,
+                    onValueChange = onQuantityChange,
+                    label = { Text("Quantity *") },
+                    modifier = Modifier.weight(1f),
                     singleLine = true,
-                    readOnly = true,
-                    trailingIcon = {
-                        IconButton(onClick = onToggleUnitDropdown) {
-                            Icon(
-                                imageVector = Icons.Filled.ArrowDropDown,
-                                contentDescription = "Select unit"
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                )
+
+                // Unit dropdown
+                Box(modifier = Modifier.weight(1f)) {
+                    OutlinedTextField(
+                        value = uiState.unit,
+                        onValueChange = {},
+                        label = { Text("Unit") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        readOnly = true,
+                        trailingIcon = {
+                            IconButton(onClick = onToggleUnitDropdown) {
+                                Icon(
+                                    imageVector = Icons.Filled.ArrowDropDown,
+                                    contentDescription = "Select unit"
+                                )
+                            }
+                        }
+                    )
+                    // Invisible clickable overlay to open dropdown on tap anywhere
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .clickable(onClick = onToggleUnitDropdown)
+                    )
+                    DropdownMenu(
+                        expanded = uiState.isUnitDropdownExpanded,
+                        onDismissRequest = onDismissUnitDropdown
+                    ) {
+                        LogUiState.UNIT_OPTIONS.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option) },
+                                onClick = { onSelectUnit(option) }
                             )
                         }
                     }
-                )
-                // Invisible clickable overlay to open dropdown on tap anywhere
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .clickable(onClick = onToggleUnitDropdown)
-                )
-                DropdownMenu(
-                    expanded = uiState.isUnitDropdownExpanded,
-                    onDismissRequest = onDismissUnitDropdown
-                ) {
-                    LogUiState.UNIT_OPTIONS.forEach { option ->
-                        DropdownMenuItem(
-                            text = { Text(option) },
-                            onClick = { onSelectUnit(option) }
-                        )
-                    }
                 }
             }
-        }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Macro input section header — label reflects the unit so the user knows
-        // what base the numbers should be entered against.
-        Text(
-            text = when (uiState.unit) {
-                "g" -> "Nutrition (per 100g)"
-                else    -> "Nutrition (per ${uiState.unit})"
-            },
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 8.dp)
-        )
-
-        // Macros row 1: Calories
-        OutlinedTextField(
-            value = uiState.calories,
-            onValueChange = onCaloriesChange,
-            label = { Text("Calories (kcal) *") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            isError = uiState.errorMessage != null && uiState.calories.isBlank()
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // Macros row 2: Protein, Carbs, Fat
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            OutlinedTextField(
-                value = uiState.protein,
-                onValueChange = onProteinChange,
-                label = { Text("Protein (g)") },
-                modifier = Modifier.weight(1f),
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
-            )
-            OutlinedTextField(
-                value = uiState.carbs,
-                onValueChange = onCarbsChange,
-                label = { Text("Carbs (g)") },
-                modifier = Modifier.weight(1f),
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
-            )
-            OutlinedTextField(
-                value = uiState.fat,
-                onValueChange = onFatChange,
-                label = { Text("Fat (g)") },
-                modifier = Modifier.weight(1f),
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
-            )
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Macro preview card
-        if (uiState.calories.isNotBlank()) {
-            MacroPreviewCard(uiState = uiState)
             Spacer(modifier = Modifier.height(16.dp))
-        }
 
-        // Error message
-        if (uiState.errorMessage != null) {
+            // Macro input section header — label reflects the unit so the user knows
+            // what base the numbers should be entered against.
             Text(
-                text = uiState.errorMessage,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(bottom = 8.dp)
+                text = when (uiState.unit) {
+                    "g" -> "Nutrition (per 100g)"
+                    else    -> "Nutrition (per ${uiState.unit})"
+                },
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp)
             )
-        }
 
-        // Save button
-        Button(
-            onClick = onSaveClick,
-            modifier = Modifier.fillMaxWidth(),
-            enabled = uiState.isValid && !uiState.isSaving
-        ) {
-            if (uiState.isSaving) {
-                CircularProgressIndicator(
-                    modifier = Modifier
-                        .height(20.dp)
-                        .width(20.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.onPrimary
+            // Macros row 1: Calories
+            OutlinedTextField(
+                value = uiState.calories,
+                onValueChange = onCaloriesChange,
+                label = { Text("Calories (kcal) *") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                isError = uiState.errorMessage != null && uiState.calories.isBlank()
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Macros row 2: Protein, Carbs, Fat
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = uiState.protein,
+                    onValueChange = onProteinChange,
+                    label = { Text("Protein (g)") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                 )
-            } else {
-                Text(saveButtonLabel)
+                OutlinedTextField(
+                    value = uiState.carbs,
+                    onValueChange = onCarbsChange,
+                    label = { Text("Carbs (g)") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                )
+                OutlinedTextField(
+                    value = uiState.fat,
+                    onValueChange = onFatChange,
+                    label = { Text("Fat (g)") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Macro preview card
+            if (uiState.calories.isNotBlank()) {
+                MacroPreviewCard(uiState = uiState)
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            // Error message
+            if (uiState.errorMessage != null) {
+                Text(
+                    text = uiState.errorMessage,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+            }
+
+            // Save button
+            Button(
+                onClick = onSaveClick,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = uiState.isValid && !uiState.isSaving
+            ) {
+                if (uiState.isSaving) {
+                    CircularProgressIndicator(
+                        modifier = Modifier
+                            .height(20.dp)
+                            .width(20.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                } else {
+                    Text(saveButtonLabel)
+                }
             }
         }
     }
@@ -1567,6 +1706,560 @@ private fun MacroPreviewItem(
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.Bold,
             color = color
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+// ─── Manual Recipe Builder ──────────────────────────────────────────
+
+/** Unit options shown in the per-ingredient unit dropdown. */
+private val INGREDIENT_UNIT_OPTIONS = listOf(
+    "g", "ml", "serving", "tsp", "tbsp", "cup", "piece", "slice", "bowl"
+)
+
+/**
+ * The full ingredient list section in the manual recipe builder.
+ *
+ * Shows:
+ * - Section header "Ingredients (defines 1 serving)"
+ * - One [ManualRecipeIngredientRow] per ingredient in [LogUiState.manualRecipeIngredients]
+ * - "+ Add Ingredient" button
+ * - "How many servings did you eat?" quantity + unit row
+ */
+@Composable
+private fun ManualRecipeIngredientsSection(
+    uiState: LogUiState,
+    searchCatalog: (String) -> Flow<List<FoodItem>>,
+    onAddIngredient: () -> Unit,
+    onRemoveIngredient: (String) -> Unit,
+    onUpdateIngredientName: (String, String) -> Unit,
+    onUpdateIngredientQuantity: (String, String) -> Unit,
+    onUpdateIngredientUnit: (String, String) -> Unit,
+    onUpdateIngredientMacro: (String, String, String) -> Unit,
+    onSelectCatalogItem: (String, FoodItem) -> Unit,
+    onClearCatalogItem: (String) -> Unit,
+    onUpdateRecipeServingQuantity: (String) -> Unit,
+    onUpdateRecipeServingUnit: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var recipeServingUnitExpanded by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        // Section header
+        Text(
+            text = "Ingredients (defines 1 serving)",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+
+        // Ingredient rows
+        uiState.manualRecipeIngredients.forEach { ingredient ->
+            ManualRecipeIngredientRow(
+                ingredient = ingredient,
+                isOnly = uiState.manualRecipeIngredients.size == 1,
+                onUpdateName = { onUpdateIngredientName(ingredient.id, it) },
+                onUpdateQuantity = { onUpdateIngredientQuantity(ingredient.id, it) },
+                onUpdateUnit = { onUpdateIngredientUnit(ingredient.id, it) },
+                onUpdateMacro = { field, value -> onUpdateIngredientMacro(ingredient.id, field, value) },
+                onSelectCatalogItem = { onSelectCatalogItem(ingredient.id, it) },
+                onClearCatalogItem = { onClearCatalogItem(ingredient.id) },
+                onRemove = { onRemoveIngredient(ingredient.id) },
+                searchCatalog = searchCatalog
+            )
+        }
+
+        // + Add Ingredient button
+        OutlinedButton(
+            onClick = onAddIngredient,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.outlinedButtonColors(
+                contentColor = MaterialTheme.colorScheme.primary
+            )
+        ) {
+            Text("+ Add Ingredient")
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // Recipe-level serving row — "how many servings did you eat?"
+        Text(
+            text = "How many servings did you eat?",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = uiState.recipeServingQuantity,
+                onValueChange = onUpdateRecipeServingQuantity,
+                label = { Text("Servings *") },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+            )
+            Box(modifier = Modifier.weight(1f)) {
+                OutlinedTextField(
+                    value = uiState.recipeServingUnit,
+                    onValueChange = {},
+                    label = { Text("Unit") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    readOnly = true,
+                    trailingIcon = {
+                        IconButton(onClick = { recipeServingUnitExpanded = true }) {
+                            Icon(
+                                imageVector = Icons.Filled.ArrowDropDown,
+                                contentDescription = "Select unit"
+                            )
+                        }
+                    }
+                )
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .clickable { recipeServingUnitExpanded = true }
+                )
+                DropdownMenu(
+                    expanded = recipeServingUnitExpanded,
+                    onDismissRequest = { recipeServingUnitExpanded = false }
+                ) {
+                    LogUiState.UNIT_OPTIONS.forEach { option ->
+                        DropdownMenuItem(
+                            text = { Text(option) },
+                            onClick = {
+                                onUpdateRecipeServingUnit(option)
+                                recipeServingUnitExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A single ingredient row in the manual recipe builder.
+ *
+ * Shows:
+ * - Ingredient search input (with live catalog dropdown) OR a catalog chip when an item is selected
+ * - Quantity input + unit dropdown
+ * - Remove button (hidden when only one row remains)
+ * - Inline macro input fields for custom (non-catalog) ingredients that have a name
+ * - Per-row scaled macro badge showing the ingredient's contribution to 1 recipe serving
+ */
+@Composable
+private fun ManualRecipeIngredientRow(
+    ingredient: ManualRecipeIngredient,
+    isOnly: Boolean,
+    onUpdateName: (String) -> Unit,
+    onUpdateQuantity: (String) -> Unit,
+    onUpdateUnit: (String) -> Unit,
+    onUpdateMacro: (field: String, value: String) -> Unit,
+    onSelectCatalogItem: (FoodItem) -> Unit,
+    onClearCatalogItem: () -> Unit,
+    onRemove: () -> Unit,
+    searchCatalog: (String) -> Flow<List<FoodItem>>,
+    modifier: Modifier = Modifier
+) {
+    // Local search state — separate from the stored customName so we can show
+    // a clear empty input after clearing a catalog selection.
+    var searchText by remember(ingredient.id) {
+        mutableStateOf(if (ingredient.catalogItem != null) "" else ingredient.customName)
+    }
+    var dropdownExpanded by remember { mutableStateOf(false) }
+    var catalogResults by remember { mutableStateOf<List<FoodItem>>(emptyList()) }
+    var debouncedQuery by remember { mutableStateOf("") }
+    var unitDropdownExpanded by remember { mutableStateOf(false) }
+
+    // 300 ms debounce on search input
+    LaunchedEffect(searchText) {
+        delay(300)
+        debouncedQuery = searchText
+    }
+
+    // Collect catalog results reactively — re-runs when debouncedQuery changes
+    LaunchedEffect(debouncedQuery) {
+        searchCatalog(debouncedQuery).collect { results ->
+            catalogResults = results
+        }
+    }
+
+    // Pre-compute scaled macros for the per-row badge
+    val qty = ingredient.quantity.toDoubleOrNull() ?: 0.0
+    val multiplier = UnitConverter.computeServingMultiplier(qty, ingredient.unit)
+    val baseCal = ingredient.catalogItem?.baseCalories ?: ingredient.calories.toDoubleOrNull() ?: 0.0
+    val baseProt = ingredient.catalogItem?.baseProtein ?: ingredient.protein.toDoubleOrNull() ?: 0.0
+    val baseCarb = ingredient.catalogItem?.baseCarbs ?: ingredient.carbs.toDoubleOrNull() ?: 0.0
+    val baseFat = ingredient.catalogItem?.baseFat ?: ingredient.fat.toDoubleOrNull() ?: 0.0
+    val scaledCal = Math.round(baseCal * multiplier * 10) / 10.0
+    val scaledProt = Math.round(baseProt * multiplier * 10) / 10.0
+    val scaledCarb = Math.round(baseCarb * multiplier * 10) / 10.0
+    val scaledFat = Math.round(baseFat * multiplier * 10) / 10.0
+    val showBadge = ingredient.hasName && qty > 0
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // ── Row 1: Name  |  [×] ─────────────────────────────────────────
+            // Ingredient name takes full available width; remove button is pinned to end.
+            // Qty and Unit live in their own row below so the name field is never squeezed.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Ingredient name — catalog chip when selected, search field otherwise
+                Box(modifier = Modifier.weight(1f)) {
+                    if (ingredient.catalogItem != null) {
+                        // Catalog chip: green dot + name + clear button
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                                )
+                                .padding(horizontal = 12.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .background(
+                                        MaterialTheme.colorScheme.primary,
+                                        shape = CircleShape
+                                    )
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = ingredient.catalogItem.name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            IconButton(
+                                onClick = {
+                                    onClearCatalogItem()
+                                    searchText = ""
+                                },
+                                modifier = Modifier.size(20.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = "Clear selection",
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    } else {
+                        // Search input with catalog dropdown
+                        OutlinedTextField(
+                            value = searchText,
+                            onValueChange = { v ->
+                                searchText = v
+                                onUpdateName(v)
+                                if (v.isNotEmpty()) dropdownExpanded = true
+                            },
+                            label = { Text("Ingredient") },
+                            placeholder = { Text("Search or add…") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            trailingIcon = {
+                                Icon(
+                                    imageVector = Icons.Filled.Search,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            },
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
+                        )
+
+                        // Catalog dropdown
+                        DropdownMenu(
+                            expanded = dropdownExpanded &&
+                                    (catalogResults.isNotEmpty() || searchText.isNotBlank()),
+                            onDismissRequest = { dropdownExpanded = false }
+                        ) {
+                            // "Add as new custom ingredient" — always shown when text is typed
+                            if (searchText.isNotBlank()) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Edit,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp),
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = "Add \"${searchText.trim()}\" as new",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    },
+                                    onClick = {
+                                        onUpdateName(searchText.trim())
+                                        dropdownExpanded = false
+                                    }
+                                )
+                            }
+
+                            // Catalog matches
+                            if (catalogResults.isNotEmpty()) {
+                                if (searchText.isNotBlank()) {
+                                    androidx.compose.material3.HorizontalDivider()
+                                }
+                                catalogResults.forEach { item ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = item.name,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    modifier = Modifier.weight(1f),
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Text(
+                                                    text = "${item.baseCalories.toInt()} kcal/100g",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        },
+                                        onClick = {
+                                            onSelectCatalogItem(item)
+                                            searchText = item.name
+                                            dropdownExpanded = false
+                                        }
+                                    )
+                                }
+                            } else if (searchText.isBlank()) {
+                                // Empty state — no text typed yet
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = "Type to search your ingredient catalog",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    },
+                                    onClick = { dropdownExpanded = false },
+                                    enabled = false
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Remove button — pinned to end of name row
+                if (!isOnly) {
+                    IconButton(
+                        onClick = onRemove,
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Remove ingredient",
+                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
+                        )
+                    }
+                }
+            }
+
+            // ── Row 2: Qty  |  Unit ──────────────────────────────────────────
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Quantity input
+                OutlinedTextField(
+                    value = ingredient.quantity,
+                    onValueChange = onUpdateQuantity,
+                    label = { Text("Qty") },
+                    modifier = Modifier.width(96.dp),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Decimal,
+                        imeAction = ImeAction.Next
+                    )
+                )
+
+                // Unit dropdown — takes remaining row width after Qty field
+                Box(modifier = Modifier.weight(1f)) {
+                    OutlinedTextField(
+                        value = ingredient.unit,
+                        onValueChange = {},
+                        label = { Text("Unit") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        readOnly = true,
+                        trailingIcon = {
+                            IconButton(
+                                onClick = { unitDropdownExpanded = true },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.ArrowDropDown,
+                                    contentDescription = "Select unit"
+                                )
+                            }
+                        }
+                    )
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .clickable { unitDropdownExpanded = true }
+                    )
+                    DropdownMenu(
+                        expanded = unitDropdownExpanded,
+                        onDismissRequest = { unitDropdownExpanded = false }
+                    ) {
+                        INGREDIENT_UNIT_OPTIONS.forEach { u ->
+                            DropdownMenuItem(
+                                text = { Text(u) },
+                                onClick = {
+                                    onUpdateUnit(u)
+                                    unitDropdownExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+
+            }
+
+            // ── Custom macro inputs ──────────────────────────────────────────
+            // Shown only for custom (non-catalog) ingredients once a name has been entered.
+            if (ingredient.catalogItem == null && ingredient.hasName) {
+                val macroLabel = when {
+                    UnitConverter.isGramsUnit(ingredient.unit) -> "Nutrition per 100g"
+                    ingredient.unit.trim().lowercase() in listOf(
+                        "piece", "pieces", "slice", "slices", "bowl", "bowls"
+                    ) -> "Nutrition per ${ingredient.unit}"
+                    else -> "Nutrition per serving"
+                }
+                Text(
+                    text = macroLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(
+                        Triple("calories", "Cal (kcal)", ingredient.calories),
+                        Triple("protein", "P (g)", ingredient.protein),
+                        Triple("carbs", "C (g)", ingredient.carbs),
+                        Triple("fat", "F (g)", ingredient.fat),
+                    ).forEach { (field, label, value) ->
+                        OutlinedTextField(
+                            value = value,
+                            onValueChange = { onUpdateMacro(field, it) },
+                            label = {
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Decimal,
+                                imeAction = ImeAction.Next
+                            )
+                        )
+                    }
+                }
+            }
+
+            // ── Per-row scaled macro badge ───────────────────────────────────
+            if (showBadge) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)
+                        )
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "${qty.formatQuantity()}${ingredient.unit}:",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    IngredientMacroBadge(value = scaledCal, label = "kcal", color = CalorieColor)
+                    IngredientMacroBadge(value = scaledProt, label = "P", color = ProteinColor, unit = "g")
+                    IngredientMacroBadge(value = scaledCarb, label = "C", color = CarbsColor, unit = "g")
+                    IngredientMacroBadge(value = scaledFat, label = "F", color = FatColor, unit = "g")
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Compact inline macro value + label badge used in [ManualRecipeIngredientRow].
+ * Renders a coloured dot, the formatted value (with optional unit), and the label.
+ */
+@Composable
+private fun IngredientMacroBadge(
+    value: Double,
+    label: String,
+    color: androidx.compose.ui.graphics.Color,
+    unit: String = "",
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .background(color, shape = CircleShape)
+        )
+        Text(
+            text = "${value.formatMacro()}$unit",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Medium
         )
         Text(
             text = label,

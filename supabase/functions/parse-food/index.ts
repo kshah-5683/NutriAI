@@ -136,18 +136,31 @@ serve(async (req) => {
     const resolvedFoods = await Promise.all(
       // deno-lint-ignore no-explicit-any
       (parsed.foods ?? []).map(async (food: any) => {
-        const catalogId = food.is_recipe
-          ? recipeCatalogId
-          : ingredientCatalogId;
+        const primaryCatalogId = food.is_recipe ? recipeCatalogId : ingredientCatalogId;
 
-        const { data: match } = await supabase
+        const { data: primaryMatch } = await supabase
           .from("food_items")
           .select("*")
-          .eq("catalog_id", catalogId)
+          .eq("catalog_id", primaryCatalogId)
           .ilike("name", food.name)
           .is("deleted_at", null)
           .limit(1)
           .maybeSingle();
+
+        // Fallback: Gemini sometimes marks saved recipes as is_recipe=false.
+        // If the ingredient catalog missed it, also check the recipe catalog.
+        let match = primaryMatch;
+        if (!match && !food.is_recipe) {
+          const { data: recipeMatch } = await supabase
+            .from("food_items")
+            .select("*")
+            .eq("catalog_id", recipeCatalogId)
+            .ilike("name", food.name)
+            .is("deleted_at", null)
+            .limit(1)
+            .maybeSingle();
+          match = recipeMatch ?? null;
+        }
 
         // Resolve ingredients for recipes too
         let resolvedIngredients: unknown[] = [];

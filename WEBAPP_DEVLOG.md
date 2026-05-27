@@ -760,6 +760,90 @@ IFCT-sourced foods never report `servingWeightG` (always null). Discrete units f
 
 ---
 
+## Phase W9: Manual Recipe Builder + Catalog Navigation Fix + Catalog Miss Bug
+
+**Status:** ✅ Completed
+**Date:** May 27, 2026
+
+### Summary
+
+Three related improvements delivered together — webapp parity with Android Phase 16:
+
+1. **Manual recipe builder mode** — `ManualInputSection` now branches between flat ingredient mode and recipe builder mode via `isRecipeMode` from the Zustand store. The recipe builder shows a dynamic ingredient list (`ManualRecipeIngredientRow`) with per-ingredient catalog search, qty/unit fields, macro fields, and a live aggregated macro preview card (`ManualRecipeIngredientsSection`).
+
+2. **Catalog page FAB opens recipe builder mode** — Clicking `+` on the Recipes catalog tab previously opened the flat ingredient form. Fixed: the FAB now pre-sets the Zustand store (`setInputMode("manual")` + `toggleRecipeMode(true)`) before calling `router.push("/log")`, so the Log page mounts directly in recipe builder mode.
+
+3. **Redundant USDA lookup for catalog-saved recipes** — The `parse-food` Edge Function only queried `ingredientCatalogId` for items where `is_recipe=false`. Gemini sometimes emits `is_recipe=false` for recipes already in the user's recipe catalog (e.g. "banana bread"). The catalog miss returned `catalogMatch: null`, causing `use-nutrition-lookup.ts` to fire a USDA FDC lookup even though macros were already known. Fixed by adding a recipe catalog fallback inside the Edge Function.
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `components/manual-recipe-ingredient-row.tsx` | Created | Per-ingredient row component with catalog chip (clears on tap), search dropdown (debounced), qty + unit inputs, macro fields (kcal/P/C/F), remove button, and `IngredientMacroBadge` for live per-row macro preview. Fixed `as const` array shape error: added `unit: ""` to the kcal badge object so all items have identical shapes. |
+| 2 | `components/manual-recipe-ingredients-section.tsx` | Created | Recipe builder section: header, `forEach` ingredient row, `+ Add Ingredient` button, recipe-level serving qty/unit row. |
+| 3 | `components/manual-input-section.tsx` | Updated | Branches on `isRecipeMode` from Zustand store: `true` → `ManualRecipeIngredientsSection` + aggregated macro preview card + Save Recipe button; `false` → unchanged flat form. Fixed `??` / `||` operator precedence: wrapped `|| 0` in parentheses (`?? (parseFloat(...) || 0)`) to resolve `ts(5076)`. |
+| 4 | `lib/utils/macro-calculator.ts` | Updated | Same `??` / `||` precedence fix in `computeRecipeMacros()`. |
+| 5 | `app/catalog/page.tsx` | Updated | Added `useRouter` + `useLogFormStore` imports. FAB `<a href="/log">` replaced with `<button onClick={handleAddClick}>`. `handleAddClick` pre-sets Zustand store (`setInputMode("manual")` + `toggleRecipeMode(true)` for Recipes tab, `toggleRecipeMode(false)` for Ingredients tab) before calling `router.push("/log")`. |
+| 6 | `supabase/functions/parse-food/index.ts` | Updated | For `is_recipe=false` items: if `ingredientCatalogId` query returns no match, a second query against `recipeCatalogId` is made before returning `catalogMatch: null`. Prevents catalog misses when Gemini mis-classifies a saved recipe as a non-recipe item. |
+
+### Key Implementation Details
+
+**Catalog FAB pre-sets store before navigation (`catalog/page.tsx`):**
+```tsx
+const handleAddClick = () => {
+  if (selectedTab === "recipes") {
+    setInputMode("manual");
+    toggleRecipeMode(true);
+  } else {
+    toggleRecipeMode(false);
+  }
+  router.push("/log");
+};
+```
+Plain `<a href>` navigation bypasses the Zustand store mutation (store is not serialised into the URL). The button + `router.push` pattern ensures the store is updated before the Log page reads it on mount.
+
+**Edge Function recipe catalog fallback (`parse-food/index.ts`):**
+```ts
+const primaryCatalogId = food.is_recipe ? recipeCatalogId : ingredientCatalogId;
+// ... primary query ...
+let match = primaryMatch;
+if (!match && !food.is_recipe) {
+  const { data: recipeMatch } = await supabase
+    .from("food_items")
+    .select("*")
+    .eq("catalog_id", recipeCatalogId)
+    .ilike("name", food.name)
+    .is("deleted_at", null)
+    .limit(1)
+    .maybeSingle();
+  match = recipeMatch ?? null;
+}
+```
+
+### TypeScript Fixes
+
+| Error | File | Root Cause | Fix |
+|-------|------|-----------|-----|
+| `ts(5076)` `??` and `\|\|` mixed | `macro-calculator.ts` | TypeScript disallows mixing `??` and `\|\|` without explicit parentheses | `?? (parseFloat(...) \|\| 0)` |
+| `ts(5076)` (×2) | `manual-input-section.tsx` | Same | Same fix in two places |
+| `ts(2339)` missing `unit` | `manual-recipe-ingredient-row.tsx` | `as const` array: first object had no `unit` field, breaking destructured type inference | Added `unit: ""` to the kcal macro badge object |
+
+### Edge Function Deployment Required
+
+```bash
+supabase functions deploy parse-food   # recipe catalog fallback for is_recipe=false items
+```
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| W37 | Pre-mutate Zustand store before `router.push("/log")` from catalog FAB | Next.js `router.push` does not serialise component state into the URL. The Log page reads `isRecipeMode` from the Zustand store on mount — store must be set before navigation, not after. |
+| W38 | Recipe catalog fallback in `parse-food` Edge Function (not client-side) | Catalog resolution is server-side for the webapp (unlike Android where `ResolveCatalogCacheUseCase` runs client-side). The fallback must live in the Edge Function so the returned `catalogMatch` is accurate before `use-nutrition-lookup.ts` reads it. |
+| W39 | Two-query fallback rather than OR query | `ilike("name", ...).eq("catalog_id", ...)` is already indexed. Running two sequential queries (ingredient → recipe) is simpler and equally fast at this scale. An OR across two `catalog_id` values would require query restructuring and would complicate the "which catalog did it come from?" tracking if ever needed. |
+
+---
+
 ## Critical Parity Notes (from Android)
 
 These three issues from the Android DEVLOG must be addressed from day one:

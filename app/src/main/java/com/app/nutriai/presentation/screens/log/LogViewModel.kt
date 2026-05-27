@@ -4,9 +4,11 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.app.nutriai.domain.model.CatalogMatch
+import com.app.nutriai.domain.model.FoodItem
 import com.app.nutriai.domain.model.IngredientKey
 import com.app.nutriai.domain.model.NutritionInfo
 import com.app.nutriai.domain.model.ParsedFood
+import com.app.nutriai.domain.repository.FoodRepository
 import com.app.nutriai.domain.usecase.ExtractLabelUseCase
 import com.app.nutriai.domain.usecase.LogFoodUseCase
 import com.app.nutriai.domain.usecase.LookupNutritionUseCase
@@ -18,6 +20,7 @@ import com.app.nutriai.util.Resource
 import com.app.nutriai.util.UnitConverter
 import com.app.nutriai.util.formatMacro
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -28,6 +31,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.ZoneId
+import java.util.UUID
 import javax.inject.Inject
 
 /**
@@ -53,6 +57,36 @@ sealed class NutritionLookupState {
     data class Found(val info: NutritionInfo) : NutritionLookupState()
     data object NotFound : NutritionLookupState()
     data class Error(val message: String) : NutritionLookupState()
+}
+
+/**
+ * A single ingredient row in the manual recipe builder.
+ *
+ * Macros are stored as per-100g strings (same convention as the flat manual form).
+ * For discrete units (piece, slice, bowl) they represent per-unit values.
+ *
+ * [catalogItem] is non-null when the user selected an item from their ingredient catalog.
+ * When non-null, macros are pre-filled from catalog data but remain editable.
+ */
+data class ManualRecipeIngredient(
+    val id: String = UUID.randomUUID().toString(),
+    /** Non-null when user selected from catalog. */
+    val catalogItem: FoodItem? = null,
+    /** Name typed manually, or copied from catalog item on selection. */
+    val customName: String = "",
+    val quantity: String = "1",
+    val unit: String = "g",
+    /** Per-100g (or per-unit for discrete) — pre-filled from catalog or user-entered. */
+    val calories: String = "",
+    val protein: String = "",
+    val carbs: String = "",
+    val fat: String = "",
+) {
+    /** True when this row has a usable name (catalog or custom). */
+    val hasName: Boolean get() = catalogItem != null || customName.isNotBlank()
+
+    /** True when this row has a positive quantity. */
+    val hasQuantity: Boolean get() = (quantity.toDoubleOrNull() ?: 0.0) > 0
 }
 
 /**
@@ -127,6 +161,12 @@ data class LogUiState(
     //   2. User taps the "Recipe / Ingredient" toggle in the manual form
     // Cleared when the user edits the food name (they're creating a new item).
     val isLoggingRecipe: Boolean = false,
+    // -- Manual recipe builder (new) --
+    // Active when isLoggingRecipe == true AND the user has started adding ingredients.
+    // Preserved across isLoggingRecipe toggle — only cleared on full reset.
+    val manualRecipeIngredients: List<ManualRecipeIngredient> = listOf(ManualRecipeIngredient()),
+    val recipeServingQuantity: String = "1",
+    val recipeServingUnit: String = "serving",
     val foodName: String = "",
     val brand: String = "",
     val calories: String = "",
@@ -146,13 +186,26 @@ data class LogUiState(
 
     /**
      * Whether the form has enough data to save.
-     * Requires food name and valid calorie value at minimum.
+     *
+     * Recipe builder mode: requires recipe name + at least one ingredient with name + qty.
+     * Flat mode: requires food name, valid calories, and positive quantity.
      */
     val isValid: Boolean
-        get() = foodName.isNotBlank()
-                && calories.toDoubleOrNull() != null
-                && (calories.toDoubleOrNull() ?: 0.0) >= 0
-                && (quantity.toDoubleOrNull() ?: 0.0) > 0
+        get() {
+            val hasBuilderIngredients = manualRecipeIngredients.any { it.hasName }
+            return if (isLoggingRecipe && hasBuilderIngredients) {
+                // Recipe builder mode
+                foodName.isNotBlank()
+                        && manualRecipeIngredients.any { it.hasName && it.hasQuantity }
+                        && (recipeServingQuantity.toDoubleOrNull() ?: 0.0) > 0
+            } else {
+                // Flat ingredient mode
+                foodName.isNotBlank()
+                        && calories.toDoubleOrNull() != null
+                        && (calories.toDoubleOrNull() ?: 0.0) >= 0
+                        && (quantity.toDoubleOrNull() ?: 0.0) > 0
+            }
+        }
 
     /**
      * Whether AI has parsed foods and user can accept them.
@@ -227,6 +280,7 @@ class LogViewModel @Inject constructor(
     private val logFoodUseCase: LogFoodUseCase,
     private val parseFoodWithAiUseCase: ParseFoodWithAiUseCase,
     private val resolveCatalogCacheUseCase: ResolveCatalogCacheUseCase,
+    private val foodRepository: FoodRepository,
     lookupNutritionUseCase: LookupNutritionUseCase,
     extractLabelUseCase: ExtractLabelUseCase,
     imageCompressor: ImageCompressor
@@ -251,9 +305,19 @@ class LogViewModel @Inject constructor(
      * Set the catalog type from navigation arguments.
      * When navigating from Catalog screen FAB, this determines which catalog to save to.
      * When navigating from Home screen FAB, this is null (default AI routing).
+     *
+     * When the target catalog is the Recipes catalog, [isLoggingRecipe] is automatically
+     * set to true so the recipe builder is shown immediately. The Recipe/Ingredient toggle
+     * is hidden in catalog mode (showTypeSelector=false), so without this the user would
+     * be stuck in the flat ingredient form with no way to switch to the recipe builder.
      */
     fun setCatalogType(catalogType: String?) {
-        _uiState.update { it.copy(catalogType = catalogType) }
+        _uiState.update { state ->
+            state.copy(
+                catalogType = catalogType,
+                isLoggingRecipe = catalogType == Constants.RECIPE_CATALOG_ID
+            )
+        }
     }
 
     // -- Input mode switching --
@@ -787,8 +851,11 @@ class LogViewModel @Inject constructor(
                 // If the user edits the food name, they're creating a custom item.
                 // Clear the catalog link so we don't update an existing catalog entry.
                 sourceCatalogFoodItemId = null,
-                // Also clear recipe routing — name change means a fresh custom item.
-                isLoggingRecipe = false
+                // NOTE: isLoggingRecipe is intentionally NOT cleared here.
+                // Previously this reset it to false, but that broke the manual recipe builder:
+                // typing the recipe name collapsed the ingredient list on every keystroke.
+                // Recipe routing is controlled solely by toggleIsLoggingRecipe() (the
+                // segmented button) and setCatalogType() (navigation from Recipes catalog).
             )
         }
     }
@@ -890,6 +957,228 @@ class LogViewModel @Inject constructor(
                         isSaving = false,
                         errorMessage = e.message ?: "Failed to save food log"
                     )
+                }
+                _events.emit(LogEvent.SaveError(e.message ?: "Unknown error"))
+            }
+        }
+    }
+
+    // ── Manual recipe builder ──────────────────────────────────────────
+
+    /**
+     * Returns a Flow of ingredient catalog items matching [query].
+     * Used by the UI to populate the ingredient search dropdown.
+     * Delegates to [FoodRepository.searchFoodsByNameInCatalog] — no new query needed.
+     */
+    fun searchIngredientCatalog(query: String): Flow<List<FoodItem>> =
+        foodRepository.searchFoodsByNameInCatalog(query, Constants.INGREDIENT_CATALOG_ID)
+
+    /** Append a new empty ingredient row. */
+    fun addManualIngredient() {
+        _uiState.update { state ->
+            state.copy(
+                manualRecipeIngredients = state.manualRecipeIngredients + ManualRecipeIngredient()
+            )
+        }
+    }
+
+    /**
+     * Remove the ingredient row with [id].
+     * No-op when only one row remains — the list must always have at least one row.
+     */
+    fun removeManualIngredient(id: String) {
+        _uiState.update { state ->
+            if (state.manualRecipeIngredients.size <= 1) return@update state
+            state.copy(
+                manualRecipeIngredients = state.manualRecipeIngredients.filter { it.id != id }
+            )
+        }
+    }
+
+    /** Update the [quantity] for the ingredient with [id]. */
+    fun updateManualIngredientQuantity(id: String, quantity: String) {
+        _uiState.update { state ->
+            state.copy(
+                manualRecipeIngredients = state.manualRecipeIngredients.map { r ->
+                    if (r.id == id) r.copy(quantity = quantity) else r
+                }
+            )
+        }
+    }
+
+    /** Update the [unit] for the ingredient with [id]. */
+    fun updateManualIngredientUnit(id: String, unit: String) {
+        _uiState.update { state ->
+            state.copy(
+                manualRecipeIngredients = state.manualRecipeIngredients.map { r ->
+                    if (r.id == id) r.copy(unit = unit) else r
+                }
+            )
+        }
+    }
+
+    /** Update the custom name for the ingredient with [id] (typed by user, not from catalog). */
+    fun updateManualIngredientName(id: String, name: String) {
+        _uiState.update { state ->
+            val updated = state.manualRecipeIngredients.map { r ->
+                if (r.id == id) r.copy(customName = name, catalogItem = null) else r
+            }
+            // Auto-grow: if the last row now has a name, append a new empty row.
+            val last = updated.last()
+            val needsGrow = last.id == id && last.customName.isNotBlank()
+            state.copy(
+                manualRecipeIngredients = if (needsGrow) updated + ManualRecipeIngredient() else updated
+            )
+        }
+    }
+
+    /** Update a macro field (calories/protein/carbs/fat) for the ingredient with [id]. */
+    fun updateManualIngredientMacro(id: String, field: String, value: String) {
+        _uiState.update { state ->
+            state.copy(
+                manualRecipeIngredients = state.manualRecipeIngredients.map { r ->
+                    if (r.id != id) return@map r
+                    when (field) {
+                        "calories" -> r.copy(calories = value)
+                        "protein"  -> r.copy(protein = value)
+                        "carbs"    -> r.copy(carbs = value)
+                        "fat"      -> r.copy(fat = value)
+                        else       -> r
+                    }
+                }
+            )
+        }
+    }
+
+    /**
+     * Select a catalog [FoodItem] for the ingredient row with [id].
+     * Pre-fills macros from catalog data. Auto-appends a new empty row when
+     * this was the last row in the list.
+     */
+    fun selectCatalogItemForIngredient(id: String, foodItem: FoodItem) {
+        _uiState.update { state ->
+            val updated = state.manualRecipeIngredients.map { r ->
+                if (r.id != id) return@map r
+                r.copy(
+                    catalogItem = foodItem,
+                    customName = foodItem.name,
+                    calories = foodItem.baseCalories.toString(),
+                    protein = foodItem.baseProtein.toString(),
+                    carbs = foodItem.baseCarbs.toString(),
+                    fat = foodItem.baseFat.toString(),
+                )
+            }
+            val wasLast = updated.last().id == id
+            state.copy(
+                manualRecipeIngredients = if (wasLast) updated + ManualRecipeIngredient() else updated
+            )
+        }
+    }
+
+    /**
+     * Clear the catalog selection for the ingredient row with [id].
+     * Keeps the custom name and macros so the user can edit them freely.
+     */
+    fun clearCatalogItemForIngredient(id: String) {
+        _uiState.update { state ->
+            state.copy(
+                manualRecipeIngredients = state.manualRecipeIngredients.map { r ->
+                    if (r.id == id) r.copy(catalogItem = null) else r
+                }
+            )
+        }
+    }
+
+    fun updateRecipeServingQuantity(qty: String) {
+        _uiState.update { it.copy(recipeServingQuantity = qty) }
+    }
+
+    fun updateRecipeServingUnit(unit: String) {
+        _uiState.update { it.copy(recipeServingUnit = unit) }
+    }
+
+    /**
+     * Save a manually-built recipe via [LogFoodUseCase.logRecipe].
+     *
+     * Pre-scales each ingredient's macros by [UnitConverter.computeServingMultiplier]
+     * before building the [CatalogMatch] list. This ensures the Edge Function / logRecipe's
+     * direct sum produces the correct per-serving recipe total.
+     *
+     * CRITICAL: base macros in FoodItem are per-100g. The pre-scaled value represents the
+     * ingredient's actual contribution to 1 serving of the recipe — matching the contract
+     * that the existing logRecipe() already uses for AI-parsed ingredients.
+     */
+    fun saveManualRecipe() {
+        val state = _uiState.value
+        if (!state.isValid) {
+            _uiState.update { it.copy(errorMessage = "Please fill in all required fields") }
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSaving = true, errorMessage = null) }
+            try {
+                val todayMillis = LocalDate.now()
+                    .atStartOfDay(ZoneId.systemDefault())
+                    .toInstant()
+                    .toEpochMilli()
+
+                val validIngredients = state.manualRecipeIngredients.filter {
+                    it.hasName && it.hasQuantity
+                }
+
+                val ingredientMatches = validIngredients.map { r ->
+                    val baseCal = r.catalogItem?.baseCalories ?: r.calories.toDoubleOrNull() ?: 0.0
+                    val baseProt = r.catalogItem?.baseProtein ?: r.protein.toDoubleOrNull() ?: 0.0
+                    val baseCarb = r.catalogItem?.baseCarbs ?: r.carbs.toDoubleOrNull() ?: 0.0
+                    val baseFat = r.catalogItem?.baseFat ?: r.fat.toDoubleOrNull() ?: 0.0
+
+                    val qty = r.quantity.toDoubleOrNull() ?: 0.0
+                    val multiplier = UnitConverter.computeServingMultiplier(qty, r.unit)
+
+                    // Pre-scaled: actual contribution of this ingredient to 1 serving of the recipe.
+                    val scaledItem = FoodItem(
+                        id = r.catalogItem?.id ?: UUID.randomUUID().toString(),
+                        catalogId = Constants.INGREDIENT_CATALOG_ID,
+                        name = r.catalogItem?.name ?: r.customName.trim(),
+                        baseServingG = Constants.PER_100G_BASE,
+                        baseCalories = baseCal * multiplier,
+                        baseProtein = baseProt * multiplier,
+                        baseCarbs = baseCarb * multiplier,
+                        baseFat = baseFat * multiplier,
+                        lastModifiedAt = System.currentTimeMillis()
+                    )
+
+                    CatalogMatch(
+                        isFromCatalog = r.catalogItem != null,
+                        parsedFood = com.app.nutriai.domain.model.ParsedFood(
+                            name = scaledItem.name,
+                            quantity = qty,
+                            unit = r.unit,
+                            confidence = 1.0,
+                            isRecipe = false,
+                            ingredients = emptyList()
+                        ),
+                        matchedFoodItem = scaledItem
+                    )
+                }
+
+                val recipeQty = state.recipeServingQuantity.toDoubleOrNull() ?: 1.0
+
+                logFoodUseCase.logRecipe(
+                    recipeName = state.foodName,
+                    ingredientMatches = ingredientMatches,
+                    quantity = recipeQty,
+                    unit = state.recipeServingUnit,
+                    dateTimestamp = todayMillis,
+                    skipDailyLog = state.catalogType != null
+                )
+
+                _uiState.update { LogUiState(catalogType = state.catalogType) }
+                _events.emit(LogEvent.SaveSuccess)
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(isSaving = false, errorMessage = e.message ?: "Failed to save recipe")
                 }
                 _events.emit(LogEvent.SaveError(e.message ?: "Unknown error"))
             }

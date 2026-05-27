@@ -1699,6 +1699,78 @@ Now: Sign up → `SignUpSuccess` event → snackbar + sign-in form → user sign
 
 ---
 
+## Phase 16: Manual Recipe Builder + Catalog Navigation Fix + Catalog Miss Bug
+
+**Status:** ✅ Completed
+**Date:** May 27, 2026
+
+### Summary
+
+Four related improvements delivered together:
+
+1. **Manual recipe builder mode on Log screen** — `ManualInputSection` now branches between a flat ingredient form and a full recipe builder. When `isLoggingRecipe` is true the screen shows a dynamic ingredient list with per-ingredient catalog search, qty/unit inputs, macro fields, and an aggregated macro preview card. When false, the existing flat form is shown unchanged.
+
+2. **Catalog page FAB opens recipe builder mode** — Navigating to the Log screen via the `+` FAB on the Recipes catalog tab previously opened the flat ingredient form. Fixed by making `setCatalogType()` set `isLoggingRecipe = true` when `catalogType == RECIPE_CATALOG_ID`, so the UI enters recipe builder mode immediately.
+
+3. **Recipe name edit collapsing ingredient list** — `updateFoodName()` was resetting `isLoggingRecipe = false` on every keystroke, collapsing the ingredient list whenever the user corrected the recipe name. Removed that reset.
+
+4. **Redundant USDA lookup for catalog-saved recipes** — `ResolveCatalogCacheUseCase` only searched `INGREDIENT_CATALOG_ID` for flat items (`isRecipe=false`). Gemini sometimes emits `isRecipe=false` for recipes that exist in the user's recipe catalog (e.g. "banana bread"). The catalog miss caused `NutritionLookupDelegate` to fire a USDA FDC lookup even though macros were already known locally. Fixed by falling back to `RECIPE_CATALOG_ID` when the ingredient catalog returns null.
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `presentation/screens/log/LogScreen.kt` | Updated | Added `ManualRecipeIngredientsSection`, `ManualRecipeIngredientRow`, `IngredientMacroBadge` composables. `ManualInputSection` signature extended with recipe builder lambdas (`onAddIngredient`, `onRemoveIngredient`, `onUpdateIngredient`, `onSelectCatalogIngredient`, `onSaveRecipeClick`, `searchIngredientCatalog`). Body branches: `if (uiState.isLoggingRecipe)` → recipe builder with aggregated macro card; `else` → unchanged flat form. Debounced catalog search via `LaunchedEffect(searchText)` with 300ms `delay` + Flow collection. |
+| 2 | `presentation/screens/log/LogScreen.kt` | Updated | `ManualRecipeIngredientRow` layout changed from a single horizontal Row (name + qty + unit + remove) to two stacked Rows: Row 1 `[name field, weight(1f)] [remove button]`, Row 2 `[qty, width(96.dp)] [unit dropdown, weight(1f)]`. Fixes vertical letter overflow on narrow screens (~360dp) where the original layout left only ~84dp for the ingredient TextField. |
+| 3 | `presentation/screens/log/LogViewModel.kt` | Updated | `setCatalogType()` now sets `isLoggingRecipe = catalogType == Constants.RECIPE_CATALOG_ID` alongside `catalogType`. `updateFoodName()` no longer resets `isLoggingRecipe = false` — typing a recipe name no longer collapses the ingredient list. |
+| 4 | `domain/usecase/ResolveCatalogCacheUseCase.kt` | Updated | For flat items (`isRecipe=false`): look up ingredient catalog first; if null, fall back to recipe catalog via Kotlin `?:` operator. Prevents redundant USDA lookups for recipes Gemini mis-classifies as non-recipe. Updated KDoc class comment to reflect the actual dual-catalog behaviour. |
+
+### Key Implementation Details
+
+**Recipe builder composables (`LogScreen.kt`):**
+```kotlin
+// Debounced catalog search
+LaunchedEffect(searchText) {
+    delay(300)
+    debouncedQuery = searchText
+}
+LaunchedEffect(debouncedQuery) {
+    searchCatalog(debouncedQuery).collect { results ->
+        catalogResults = results
+    }
+}
+```
+
+**Aggregated macro preview in recipe mode:**
+```kotlin
+val recipeCalories = uiState.manualRecipeIngredients.sumOf { r ->
+    val q = r.quantity.toDoubleOrNull() ?: 0.0
+    val m = UnitConverter.computeServingMultiplier(q, r.unit)
+    (r.catalogItem?.baseCalories ?: r.calories.toDoubleOrNull() ?: 0.0) * m
+}
+```
+
+**Catalog fallback (`ResolveCatalogCacheUseCase.kt`):**
+```kotlin
+val ingredientMatch = foodRepository.searchFoodByNameExact(
+    parsed.name, Constants.INGREDIENT_CATALOG_ID
+)
+val match = ingredientMatch ?: foodRepository.searchFoodByNameExact(
+    parsed.name, Constants.RECIPE_CATALOG_ID
+)
+```
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| 60 | `isLoggingRecipe` driven by `setCatalogType()`, not just a manual toggle | The entry point matters — users arriving from the Recipes catalog FAB expect recipe builder mode, not a flat form. Centralising the mode decision in `setCatalogType()` ensures all navigation paths (catalog FAB, manual toggle) produce consistent state. |
+| 61 | `updateFoodName()` must NOT clear `isLoggingRecipe` | Editing the recipe name is not a mode change. Clearing `isLoggingRecipe` on every keystroke collapses the ingredient list mid-editing, which is a destructive UX regression. Mode changes are only initiated explicitly by the user. |
+| 62 | Dual-catalog fallback in `ResolveCatalogCacheUseCase` | Gemini's `isRecipe` classification is heuristic — a recipe the user already logged (stored in `RECIPE_CATALOG_ID`) may be returned as `isRecipe=false` on subsequent parses. Falling back to the recipe catalog prevents an unnecessary external API call and ensures catalog items are always reused regardless of AI classification drift. |
+| 63 | Two-row layout for `ManualRecipeIngredientRow` (name + remove / qty + unit) | Placing all four controls in a single horizontal Row left the ingredient name field only ~84dp on a 360dp phone — too narrow for `OutlinedTextField` to render without vertical letter overflow. Splitting into two rows gives the name field the full card width (minus remove button), matching the webapp's `flex-col sm:flex-row` responsive pattern. |
+
+---
+
 ## Dev Environment Setup
 
 **Date:** April 27, 2026

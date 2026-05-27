@@ -2,10 +2,47 @@
 
 import { create } from "zustand";
 import type { ParsedFood, NutritionInfo } from "@/lib/types/ai";
+import type { FoodItem } from "@/lib/types/domain";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type InputMode = "ai" | "manual" | "scan";
+
+/**
+ * A single ingredient row in the manual recipe builder.
+ * Macros are stored as per-100g strings (same convention as the flat manual form).
+ * For discrete units (piece, slice, bowl), macros represent per-unit values.
+ */
+export interface ManualRecipeIngredient {
+  /** Stable React list key */
+  id: string;
+  /** Non-null when user selected an item from their ingredient catalog */
+  catalogItem: FoodItem | null;
+  /** Name entered manually when not from catalog */
+  customName: string;
+  quantity: string;
+  unit: string;
+  /** Base macros per 100g (or per-unit for discrete). Pre-filled from catalog or user-entered. */
+  calories: string;
+  protein: string;
+  carbs: string;
+  fat: string;
+}
+
+/** Returns a blank ingredient row with a unique id. */
+function createEmptyIngredient(): ManualRecipeIngredient {
+  return {
+    id: Math.random().toString(36).slice(2),
+    catalogItem: null,
+    customName: "",
+    quantity: "1",
+    unit: "g",
+    calories: "",
+    protein: "",
+    carbs: "",
+    fat: "",
+  };
+}
 
 interface LogFormState {
   // Tab state
@@ -22,7 +59,7 @@ interface LogFormState {
   nutritionResults: Record<string, NutritionInfo | null>;
   nutritionLoading: Record<string, boolean>;
 
-  // Manual form state
+  // Manual form state — flat ingredient mode
   foodName: string;
   brand: string;
   servingG: string;
@@ -32,6 +69,17 @@ interface LogFormState {
   protein: string;
   carbs: string;
   fat: string;
+
+  // Manual form state — recipe mode
+  /** True when the manual form is building a recipe with an ingredient list */
+  isRecipeMode: boolean;
+  /** Recipe name (separate from flat-mode foodName) */
+  recipeName: string;
+  /** How many servings of the recipe the user ate (recipe-level quantity) */
+  recipeQuantity: string;
+  recipeUnit: string;
+  /** Dynamic ingredient list — preserved across Recipe↔Ingredient mode toggles */
+  recipeIngredients: ManualRecipeIngredient[];
 
   // Actions
   setInputMode: (mode: InputMode) => void;
@@ -52,6 +100,28 @@ interface LogFormState {
     suggested_unit: string;
   }) => void;
   setManualField: (field: string, value: string) => void;
+
+  // Recipe mode actions
+  /** Toggle Recipe/Ingredient mode. Ingredient list is preserved across toggles. */
+  toggleRecipeMode: (isRecipe: boolean) => void;
+  /** Append a new empty ingredient row. */
+  addIngredient: () => void;
+  /** Remove ingredient row by id. No-op when only one row remains. */
+  removeIngredient: (id: string) => void;
+  /** Update a single field on an ingredient row. */
+  updateIngredient: (id: string, field: keyof ManualRecipeIngredient, value: string) => void;
+  /**
+   * Select a catalog FoodItem for an ingredient row.
+   * Pre-fills macros from catalogItem.base* and switches customName to item name.
+   * Auto-appends a new empty row if this was the last row.
+   */
+  selectCatalogIngredient: (id: string, foodItem: FoodItem) => void;
+  /**
+   * Clear the catalog selection for a row, keeping the custom name.
+   * Macros are NOT cleared — user keeps whatever was pre-filled.
+   */
+  clearCatalogIngredient: (id: string) => void;
+
   resetForm: () => void;
 }
 
@@ -67,6 +137,12 @@ const initialManualState = {
   protein: "",
   carbs: "",
   fat: "",
+  // Recipe mode
+  isRecipeMode: false,
+  recipeName: "",
+  recipeQuantity: "1",
+  recipeUnit: "serving",
+  recipeIngredients: [createEmptyIngredient()] as ManualRecipeIngredient[],
 };
 
 const initialAiState = {
@@ -174,10 +250,84 @@ export const useLogFormStore = create<LogFormState>((set, get) => ({
 
   setManualField: (field, value) => set({ [field]: value }),
 
+  // ─── Recipe mode actions ────────────────────────────────────────────────────
+
+  toggleRecipeMode: (isRecipe) =>
+    set({ isRecipeMode: isRecipe }),
+
+  addIngredient: () =>
+    set((state) => ({
+      recipeIngredients: [...state.recipeIngredients, createEmptyIngredient()],
+    })),
+
+  removeIngredient: (id) =>
+    set((state) => {
+      if (state.recipeIngredients.length <= 1) return state;
+      return {
+        recipeIngredients: state.recipeIngredients.filter((r) => r.id !== id),
+      };
+    }),
+
+  updateIngredient: (id, field, value) =>
+    set((state) => {
+      const updated = state.recipeIngredients.map((r) =>
+        r.id === id ? { ...r, [field]: value } : r
+      );
+
+      // Auto-grow: if the last row now has a customName, append a new empty row.
+      // Triggered only by the 'customName' field — catalog selection uses selectCatalogIngredient.
+      const last = updated[updated.length - 1];
+      if (
+        field === "customName" &&
+        last?.id === id &&
+        last.customName.trim().length > 0 &&
+        last.catalogItem === null
+      ) {
+        return { recipeIngredients: [...updated, createEmptyIngredient()] };
+      }
+
+      return { recipeIngredients: updated };
+    }),
+
+  selectCatalogIngredient: (id, foodItem) =>
+    set((state) => {
+      const updated = state.recipeIngredients.map((r) =>
+        r.id === id
+          ? {
+              ...r,
+              catalogItem: foodItem,
+              customName: foodItem.name,
+              calories: String(foodItem.baseCalories),
+              protein: String(foodItem.baseProtein),
+              carbs: String(foodItem.baseCarbs),
+              fat: String(foodItem.baseFat),
+            }
+          : r
+      );
+
+      // Auto-grow: if the updated row was the last one, append a new empty row.
+      const lastIdx = updated.length - 1;
+      const wasLast = updated[lastIdx]?.id === id;
+      return {
+        recipeIngredients: wasLast
+          ? [...updated, createEmptyIngredient()]
+          : updated,
+      };
+    }),
+
+  clearCatalogIngredient: (id) =>
+    set((state) => ({
+      recipeIngredients: state.recipeIngredients.map((r) =>
+        r.id === id ? { ...r, catalogItem: null } : r
+      ),
+    })),
+
   resetForm: () =>
     set({
       inputMode: "ai",
       ...initialAiState,
       ...initialManualState,
+      // Ensure recipe ingredient list is re-initialised with a fresh empty row
+      recipeIngredients: [createEmptyIngredient()],
     }),
 }));
