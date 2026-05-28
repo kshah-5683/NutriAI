@@ -38,8 +38,8 @@ export function ClarificationInput({
     <div
       className="mt-2 rounded-md border p-2.5"
       style={{
-        backgroundColor: "var(--bg-warning, #FFF8E1)",
-        borderColor: "var(--border-warning, #FFE082)",
+        backgroundColor: "var(--bg-warning)",
+        borderColor: "var(--border-warning)",
       }}
     >
       {/* Hint text */}
@@ -112,8 +112,8 @@ export function MatchTypeBadge({
       <span
         className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium"
         style={{
-          backgroundColor: "var(--color-primary-container, #D4E8C8)",
-          color: "var(--color-primary)",
+          backgroundColor: "var(--bg-branded)",
+          color: "var(--text-branded)",
         }}
       >
         🟢 Exact brand match
@@ -126,8 +126,8 @@ export function MatchTypeBadge({
       <span
         className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium"
         style={{
-          backgroundColor: "var(--bg-warning, #FFF8E1)",
-          color: "var(--text-warning, #F57F17)",
+          backgroundColor: "var(--bg-warning)",
+          color: "var(--text-warning)",
         }}
       >
         {brandNotFound ? "🟡 Brand not found, using generic" : "🟡 Generic estimate"}
