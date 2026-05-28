@@ -63,6 +63,7 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -255,6 +256,16 @@ fun LogScreen(
                         onRemoveIngredient = viewModel::removeIngredient,
                         onMoveIngredientUp = viewModel::moveIngredientUp,
                         onMoveIngredientDown = viewModel::moveIngredientDown,
+                        onUseGeneric = viewModel::resolveClarificationGeneric,
+                        onSubmitClarification = { index, input ->
+                            val weightRegex = Regex("""(\d+\.?\d*)\s*g?""")
+                            val weightMatch = weightRegex.matchEntire(input.trim())
+                            if (weightMatch != null) {
+                                viewModel.resolveClarificationWithWeight(index, weightMatch.groupValues[1].toDouble())
+                            } else {
+                                viewModel.resolveClarificationWithBrand(index, input.trim())
+                            }
+                        },
                         onLabelPhotoSelected = { uri ->
                             viewModel.onLabelPhotoSelected(uri, "gallery")
                         },
@@ -400,6 +411,8 @@ private fun AiInputSection(
     onRemoveIngredient: (foodIndex: Int, ingredientIndex: Int) -> Unit = { _, _ -> },
     onMoveIngredientUp: (foodIndex: Int, ingredientIndex: Int) -> Unit = { _, _ -> },
     onMoveIngredientDown: (foodIndex: Int, ingredientIndex: Int) -> Unit = { _, _ -> },
+    onUseGeneric: (Int) -> Unit = {},
+    onSubmitClarification: (Int, String) -> Unit = { _, _ -> },
     onLabelPhotoSelected: (Uri) -> Unit = {},
     onClearLabelError: () -> Unit = {},
     modifier: Modifier = Modifier
@@ -655,6 +668,9 @@ private fun AiInputSection(
                         nutritionState = nutritionState,
                         ingredientNutritionStates = ingredientNutritionStates,
                         isRecipeOverride = uiState.recipeOverrides.contains(index),
+                        clarificationResolution = uiState.clarificationResolutions[index],
+                        onUseGeneric = { onUseGeneric(index) },
+                        onSubmitClarification = { input -> onSubmitClarification(index, input) },
                         onClick = { onSelectFood(index) },
                         onIngredientClick = { ingIdx -> onSelectIngredient(ingIdx) },
                         onToggleRecipeOverride = { onToggleRecipeOverride(index) },
@@ -819,6 +835,9 @@ private fun ParsedFoodCard(
     nutritionState: NutritionLookupState? = null,
     ingredientNutritionStates: Map<Int, NutritionLookupState> = emptyMap(),
     isRecipeOverride: Boolean = false,
+    clarificationResolution: ClarificationResolution? = null,
+    onUseGeneric: () -> Unit = {},
+    onSubmitClarification: (String) -> Unit = {},
     onClick: () -> Unit,
     onIngredientClick: (Int) -> Unit = {},
     onToggleRecipeOverride: () -> Unit = {},
@@ -927,13 +946,39 @@ private fun ParsedFoodCard(
                 }
             }
 
+            // Phase 17: Clarification banner for variable serving-size items
+            val needsClarification = food.needsClarification && catalogMatch?.isFromCatalog != true
+            val showClarificationBanner = needsClarification && clarificationResolution == null
+
+            if (showClarificationBanner) {
+                Spacer(modifier = Modifier.height(6.dp))
+                ClarificationBanner(
+                    hint = food.clarificationHint ?: "Serving size varies by brand. Specify a brand or weight for better accuracy?",
+                    onUseGeneric = onUseGeneric,
+                    onSubmitClarification = onSubmitClarification,
+                    isLoading = nutritionState is NutritionLookupState.Loading
+                )
+            }
+
             // Phase 5: Nutrition lookup status for flat items (not recipes)
-            if (!food.isRecipe && catalogMatch?.isFromCatalog != true) {
+            // Phase 17: Hide during active clarification banner (lookup hasn't started yet)
+            if (!food.isRecipe && catalogMatch?.isFromCatalog != true && !showClarificationBanner) {
                 NutritionStatusRow(
                     nutritionState = nutritionState,
                     isSelected = isSelected,
                     modifier = Modifier.padding(top = 6.dp)
                 )
+
+                // Phase 17: Match type badge after nutrition resolves
+                val foundInfo = (nutritionState as? NutritionLookupState.Found)?.info
+                if (foundInfo?.matchType != null) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    MatchTypeBadge(
+                        matchType = foundInfo.matchType,
+                        brandNotFound = clarificationResolution?.type == ClarificationType.BRAND
+                                && foundInfo.matchType == "generic"
+                    )
+                }
             }
 
             // Recipe override toggle — shown on flat items only (AI returned is_recipe=false).
@@ -1294,6 +1339,155 @@ private fun NutritionStatusRow(
         }
 
         null -> { /* Not started yet or from catalog — show nothing */ }
+    }
+}
+
+// ─── Clarification Banner (Phase 17) ────────────────────────────────
+
+/**
+ * Banner shown inside ParsedFoodCard when AI flags variable serving size.
+ * Allows user to accept generic estimate or provide brand/weight for better accuracy.
+ */
+@Composable
+private fun ClarificationBanner(
+    hint: String,
+    onUseGeneric: () -> Unit,
+    onSubmitClarification: (String) -> Unit,
+    isLoading: Boolean = false,
+    modifier: Modifier = Modifier
+) {
+    var inputText by remember { mutableStateOf("") }
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f)
+        ),
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp)
+        ) {
+            // Warning hint text
+            Row(verticalAlignment = Alignment.Top) {
+                Text(
+                    text = "\u26A0\uFE0F",
+                    style = MaterialTheme.typography.labelSmall
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = hint,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Input field
+            OutlinedTextField(
+                value = inputText,
+                onValueChange = { inputText = it },
+                placeholder = {
+                    Text(
+                        "Brand name or weight (e.g. 40g)",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                },
+                enabled = !isLoading,
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions.Default,
+                keyboardActions = KeyboardActions(
+                    onDone = {
+                        if (inputText.isNotBlank()) onSubmitClarification(inputText.trim())
+                    }
+                )
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Action buttons
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onUseGeneric,
+                    enabled = !isLoading,
+                    modifier = Modifier.weight(1f),
+                    contentPadding = ButtonDefaults.ContentPadding
+                ) {
+                    Text("Use generic", style = MaterialTheme.typography.labelSmall)
+                }
+                Button(
+                    onClick = {
+                        if (inputText.isNotBlank()) onSubmitClarification(inputText.trim())
+                    },
+                    enabled = !isLoading && inputText.isNotBlank(),
+                    modifier = Modifier.weight(1f),
+                    contentPadding = ButtonDefaults.ContentPadding
+                ) {
+                    if (isLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 1.5.dp,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+                    Text(
+                        if (isLoading) "Looking up..." else "Update & Lookup",
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Badge showing the quality of the nutrition match after lookup.
+ */
+@Composable
+private fun MatchTypeBadge(
+    matchType: String?,
+    brandNotFound: Boolean = false,
+    modifier: Modifier = Modifier
+) {
+    val (text, containerColor, contentColor) = when {
+        matchType == "branded" -> Triple(
+            "\uD83D\uDFE2 Exact brand match",
+            MaterialTheme.colorScheme.primaryContainer,
+            MaterialTheme.colorScheme.onPrimaryContainer
+        )
+        matchType == "generic" && brandNotFound -> Triple(
+            "\uD83D\uDFE1 Brand not found, using generic",
+            MaterialTheme.colorScheme.tertiaryContainer,
+            MaterialTheme.colorScheme.onTertiaryContainer
+        )
+        matchType == "generic" -> Triple(
+            "\uD83D\uDFE1 Generic estimate",
+            MaterialTheme.colorScheme.tertiaryContainer,
+            MaterialTheme.colorScheme.onTertiaryContainer
+        )
+        else -> return // Don't show anything for null matchType
+    }
+
+    Surface(
+        color = containerColor,
+        shape = RoundedCornerShape(12.dp),
+        modifier = modifier
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = contentColor,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+        )
     }
 }
 

@@ -40,34 +40,76 @@ class NutritionRepositoryImpl @Inject constructor(
     private val ifctCsvLoader: IfctCsvLoader
 ) : NutritionRepository {
 
-    override suspend fun searchNutrition(foodName: String): Resource<List<NutritionInfo>> {
+    override suspend fun searchNutrition(foodName: String, brand: String?): Resource<List<NutritionInfo>> {
         // Ensure IFCT table is populated (no-op after first launch)
         runCatching { ifctCsvLoader.seedIfNeeded() }
 
-        // ── Tier 1: USDA FoodData Central ──────────────────────────────────
+        // ── Tier 1a: FDC Branded (only when brand is provided) ─────────────
+        if (!brand.isNullOrBlank()) {
+            val brandedResult = tryFdc("$brand $foodName", dataType = "Branded")
+            if (brandedResult != null) {
+                // Validate the FDC result actually belongs to the requested brand.
+                // FDC search is keyword-based and may return a different brand
+                // (e.g. "Amul cheese" → "Food Lion cheese" if Amul isn't in FDC).
+                val topResult = (brandedResult as? Resource.Success)?.data?.firstOrNull()
+                val resultBrand = (topResult?.brand ?: "").lowercase()
+                val requestedBrand = brand.lowercase().trim()
+                val brandMatches = resultBrand.contains(requestedBrand) ||
+                    requestedBrand.split("\\s+".toRegex()).any { word ->
+                        word.length > 2 && resultBrand.contains(word)
+                    }
+
+                if (brandMatches) {
+                    return brandedResult.mapResults { it.copy(matchType = "branded") }
+                }
+                // Brand mismatch — fall through to generic tier.
+                // UI will show "Brand not found, using generic" via matchType + clarification type.
+                Log.d(TAG, "FDC Branded brand \"${topResult?.brand}\" doesn't match \"$brand\" — falling through to generic")
+            }
+        }
+
+        // ── Tier 1b: USDA FoodData Central (all types) ────────────────────
         val fdcResult = tryFdc(foodName)
-        if (fdcResult != null) return fdcResult
+        if (fdcResult != null) {
+            return fdcResult.mapResults { it.copy(matchType = "generic") }
+        }
 
         // ── Tier 2: IFCT 2017 offline fallback ─────────────────────────────
         val ifctResult = tryIfct(foodName)
-        if (ifctResult != null) return ifctResult
+        if (ifctResult != null) {
+            return ifctResult.mapResults { it.copy(matchType = "generic") }
+        }
 
         // ── Tier 3: Nothing found ───────────────────────────────────────────
         Log.d(TAG, "No results from FDC or IFCT for \"$foodName\"")
         return Resource.Success(emptyList())
     }
 
+    /**
+     * Maps each [NutritionInfo] inside a [Resource.Success] list using the given transform.
+     */
+    private fun Resource<List<NutritionInfo>>.mapResults(
+        transform: (NutritionInfo) -> NutritionInfo
+    ): Resource<List<NutritionInfo>> = when (this) {
+        is Resource.Success -> Resource.Success(data.map(transform))
+        is Resource.Error -> this
+        is Resource.Loading -> this
+    }
+
     // ─── Tier 1: FDC ─────────────────────────────────────────────────────────
 
-    private suspend fun tryFdc(foodName: String): Resource<List<NutritionInfo>>? {
+    private suspend fun tryFdc(
+        foodName: String,
+        dataType: String = "Foundation,SR Legacy,Branded"
+    ): Resource<List<NutritionInfo>>? {
         if (fdcApiKey.isBlank()) {
             Log.w(TAG, "USDA_FDC_API_KEY is not set — skipping FDC lookup.")
             return null
         }
 
         return try {
-            Log.d(TAG, "FDC search: \"$foodName\"")
-            val response = fdcApiService.searchFood(query = foodName, apiKey = fdcApiKey)
+            Log.d(TAG, "FDC search: \"$foodName\" (dataType=$dataType)")
+            val response = fdcApiService.searchFood(query = foodName, apiKey = fdcApiKey, dataType = dataType)
             Log.d(TAG, "FDC returned ${response.foods.size} foods for \"$foodName\"")
 
             val results = response.foods

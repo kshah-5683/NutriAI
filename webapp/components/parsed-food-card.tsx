@@ -1,6 +1,8 @@
 "use client";
 
 import type { ParsedFood, NutritionInfo } from "@/lib/types/ai";
+import type { ClarificationResolution } from "@/lib/stores/log-form-store";
+import { ClarificationInput, MatchTypeBadge } from "./clarification-input";
 
 interface ParsedFoodCardProps {
   food: ParsedFood;
@@ -9,10 +11,18 @@ interface ParsedFoodCardProps {
   nutritionInfo: NutritionInfo | null | undefined;
   nutritionLoading: boolean;
   onSelect: (index: number) => void;
+  /** Current clarification resolution for this item (undefined = not yet resolved) */
+  clarificationResolution?: ClarificationResolution;
+  /** Called when user accepts generic estimate */
+  onUseGeneric: (index: number) => void;
+  /** Called when user submits brand or weight clarification */
+  onSubmitClarification: (index: number, input: string) => void;
 }
 
 /**
- * Selectable card showing a parsed food item with catalog badge and nutrition status.
+ * Selectable card showing a parsed food item with catalog badge, nutrition status,
+ * and serving-size clarification prompt when needed.
+ *
  * For recipes: shows expandable ingredient rows.
  */
 export function ParsedFoodCard({
@@ -22,8 +32,19 @@ export function ParsedFoodCard({
   nutritionInfo,
   nutritionLoading,
   onSelect,
+  clarificationResolution,
+  onUseGeneric,
+  onSubmitClarification,
 }: ParsedFoodCardProps) {
   const hasCatalogMatch = food.catalogMatch?.isFromCatalog === true;
+  const needsClarification = food.needsClarification && !hasCatalogMatch;
+  const isResolved = clarificationResolution !== undefined;
+  const showClarificationBanner = needsClarification && !isResolved;
+
+  // Determine if user provided a brand that wasn't found (generic fallback)
+  const brandNotFound =
+    clarificationResolution?.type === "brand" &&
+    nutritionInfo?.matchType === "generic";
 
   return (
     <button
@@ -85,18 +106,39 @@ export function ParsedFoodCard({
         )}
       </div>
 
+      {/* Clarification banner — shown when AI flagged ambiguous serving size */}
+      {showClarificationBanner && (
+        <div onClick={(e) => e.stopPropagation()}>
+          <ClarificationInput
+            hint={food.clarificationHint ?? "Serving size varies by brand. Specify a brand or weight for better accuracy?"}
+            onUseGeneric={() => onUseGeneric(index)}
+            onSubmitClarification={(input) => onSubmitClarification(index, input)}
+            isLoading={nutritionLoading}
+          />
+        </div>
+      )}
+
       {/* Nutrition status */}
-      {!hasCatalogMatch && (
+      {!hasCatalogMatch && !showClarificationBanner && (
         <div className="mt-2 text-xs" style={{ color: "var(--text-secondary)" }}>
           {nutritionLoading ? (
             <span className="flex items-center gap-1">
               <LoadingDot /> Looking up nutrition...
             </span>
           ) : nutritionInfo ? (
-            <span style={{ color: "var(--color-primary)" }}>
-              🟢 {Math.round(nutritionInfo.caloriesPer100g)} kcal/100g ({nutritionInfo.source})
-            </span>
-          ) : (
+            <div className="flex flex-col gap-1">
+              <span style={{ color: "var(--color-primary)" }}>
+                {Math.round(nutritionInfo.caloriesPer100g)} kcal/100g ({nutritionInfo.source})
+              </span>
+              {/* Match type badge — shows quality of the match */}
+              {nutritionInfo.matchType && (
+                <MatchTypeBadge
+                  matchType={nutritionInfo.matchType}
+                  brandNotFound={brandNotFound}
+                />
+              )}
+            </div>
+          ) : needsClarification && !isResolved ? null : (
             <span>⚪ No nutrition data found</span>
           )}
         </div>

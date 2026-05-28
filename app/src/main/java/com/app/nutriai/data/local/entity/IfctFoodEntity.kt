@@ -61,5 +61,6 @@ fun IfctFoodEntity.toNutritionInfo(): NutritionInfo = NutritionInfo(
     fatPer100g = fatG,
     fiberPer100g = if (fiberG > 0.0) fiberG else null,
     source = "IFCT 2017 (Offline)",
-    externalId = code
+    externalId = code,
+    matchType = null // Caller sets to "generic" in NutritionRepositoryImpl
 )

@@ -20,6 +20,17 @@ export interface ParsedFood {
   ingredients: ParsedFood[];
   /** Resolved catalog match — null if this is a new food */
   catalogMatch: CatalogMatch | null;
+  /**
+   * True when the food has a variable serving size (e.g. bread slices, cheese slices)
+   * and the user did not specify a brand, weight, or size qualifier.
+   * The UI should prompt the user for more detail before proceeding with nutrition lookup.
+   */
+  needsClarification: boolean;
+  /**
+   * A short user-facing prompt explaining why clarification is needed.
+   * Null when needsClarification is false.
+   */
+  clarificationHint: string | null;
 }
 
 /**
@@ -53,6 +64,13 @@ export interface NutritionInfo {
    * Null when FDC does not report a gram-based serving size or for IFCT foods.
    */
   servingWeightG: number | null;
+  /**
+   * Indicates the quality of the nutrition match:
+   * - "branded" — exact brand match from FDC Branded database (high confidence)
+   * - "generic" — generic/unbranded match from FDC Foundation/SR Legacy or IFCT
+   * - null — not yet determined or not applicable
+   */
+  matchType: "branded" | "generic" | null;
 }
 
 /**
@@ -86,6 +104,7 @@ export interface LookupNutritionResponse {
     name: string;
     nutrition: NutritionInfo | null;
     source: string | null;
+    matchType: "branded" | "generic" | null;
   }>;
 }
 

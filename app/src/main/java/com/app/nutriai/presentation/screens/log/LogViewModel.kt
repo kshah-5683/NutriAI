@@ -60,6 +60,24 @@ sealed class NutritionLookupState {
 }
 
 /**
+ * How a serving-size ambiguity was resolved for a specific parsed food item.
+ */
+enum class ClarificationType { GENERIC, BRAND, WEIGHT_OVERRIDE }
+
+/**
+ * Resolution data for a serving-size clarification prompt.
+ *
+ * @property type How the ambiguity was resolved
+ * @property brand Brand name provided by the user (only when [type] == [ClarificationType.BRAND])
+ * @property weightOverrideG Gram weight per unit provided by the user (only when [type] == [ClarificationType.WEIGHT_OVERRIDE])
+ */
+data class ClarificationResolution(
+    val type: ClarificationType,
+    val brand: String? = null,
+    val weightOverrideG: Double? = null
+)
+
+/**
  * A single ingredient row in the manual recipe builder.
  *
  * Macros are stored as per-100g strings (same convention as the flat manual form).
@@ -141,6 +159,11 @@ data class LogUiState(
     // instead of the Ingredients catalog, regardless of what the AI returned (is_recipe=false).
     // Cleared when parsed foods are cleared.
     val recipeOverrides: Set<Int> = emptySet(),
+
+    // -- Serving size clarification state (Phase 17) --
+    // Key = index in [parsedFoods]. Absent key = not yet resolved (banner showing).
+    // Present key = user has resolved the ambiguity (via generic, brand, or weight override).
+    val clarificationResolutions: Map<Int, ClarificationResolution> = emptyMap(),
 
     // -- Phase 11: Label scanner state --
     /** True while the image is being compressed and sent to Gemma 4 for label reading. */
@@ -366,7 +389,8 @@ class LogViewModel @Inject constructor(
                     catalogMatches = emptyList(),
                     ingredientCatalogMatches = emptyMap(),
                     nutritionLookups = emptyMap(),
-                    ingredientNutritionLookups = emptyMap()
+                    ingredientNutritionLookups = emptyMap(),
+                    clarificationResolutions = emptyMap()
                 )
             }
 
@@ -416,16 +440,28 @@ class LogViewModel @Inject constructor(
                 }
             }
 
+            // Phase 17: Auto-resolve clarification for catalog-matched items.
+            // Catalog data is the user's own historical macros — no need for clarification.
+            val autoResolved = mutableMapOf<Int, ClarificationResolution>()
+            parsedFoods.forEachIndexed { index, food ->
+                val isFromCatalog = matches.getOrNull(index)?.isFromCatalog == true
+                if (food.needsClarification && isFromCatalog) {
+                    autoResolved[index] = ClarificationResolution(type = ClarificationType.GENERIC)
+                }
+            }
+
             _uiState.update {
                 it.copy(
                     catalogMatches = matches,
                     ingredientCatalogMatches = ingredientMatches,
-                    isResolvingCache = false
+                    isResolvingCache = false,
+                    clarificationResolutions = it.clarificationResolutions + autoResolved
                 )
             }
 
             // Phase 5: Kick off nutrition lookup after catalog resolution.
             // Skips items already found in the catalog (macros already available).
+            // Phase 17: Also skips items that need clarification (paused until user resolves).
             lookupNutrition(parsedFoods, matches, ingredientMatches)
 
         } catch (e: Exception) {
@@ -466,6 +502,66 @@ class LogViewModel @Inject constructor(
      */
     fun selectIngredient(ingredientIndex: Int?) {
         _uiState.update { it.copy(selectedIngredientIndex = ingredientIndex) }
+    }
+
+    // ─── Serving size clarification actions (Phase 17) ──────────────────
+
+    /**
+     * User chose "Use generic" — accept the generic USDA/IFCT estimate.
+     * Resolves the clarification and triggers a standard nutrition lookup.
+     */
+    fun resolveClarificationGeneric(index: Int) {
+        _uiState.update {
+            it.copy(
+                clarificationResolutions = it.clarificationResolutions +
+                    (index to ClarificationResolution(type = ClarificationType.GENERIC))
+            )
+        }
+        // Trigger standard lookup now that clarification is resolved
+        val food = _uiState.value.parsedFoods.getOrNull(index) ?: return
+        val catalogMatch = _uiState.value.catalogMatches.getOrNull(index)
+        if (catalogMatch?.isFromCatalog != true) {
+            viewModelScope.launch {
+                nutritionLookupDelegate.performAndUpdateLookup(index, food.name)
+            }
+        }
+    }
+
+    /**
+     * User provided a brand name — trigger a brand-specific FDC lookup.
+     */
+    fun resolveClarificationWithBrand(index: Int, brand: String) {
+        _uiState.update {
+            it.copy(
+                clarificationResolutions = it.clarificationResolutions +
+                    (index to ClarificationResolution(type = ClarificationType.BRAND, brand = brand))
+            )
+        }
+        val food = _uiState.value.parsedFoods.getOrNull(index) ?: return
+        viewModelScope.launch {
+            nutritionLookupDelegate.performAndUpdateLookup(index, food.name, brand = brand)
+        }
+    }
+
+    /**
+     * User provided a weight in grams — override servingWeightG client-side.
+     * Triggers a standard lookup (no brand); the weight override will be
+     * applied when accepting the parsed food into the manual form.
+     */
+    fun resolveClarificationWithWeight(index: Int, weightG: Double) {
+        _uiState.update {
+            it.copy(
+                clarificationResolutions = it.clarificationResolutions +
+                    (index to ClarificationResolution(type = ClarificationType.WEIGHT_OVERRIDE, weightOverrideG = weightG))
+            )
+        }
+        val food = _uiState.value.parsedFoods.getOrNull(index) ?: return
+        val catalogMatch = _uiState.value.catalogMatches.getOrNull(index)
+        if (catalogMatch?.isFromCatalog != true) {
+            viewModelScope.launch {
+                nutritionLookupDelegate.performAndUpdateLookup(index, food.name)
+            }
+        }
     }
 
     /**
@@ -537,11 +633,14 @@ class LogViewModel @Inject constructor(
             //   "1 piece egg (50g)" correctly yields ~78 kcal instead of 156 kcal/100g.
             nutritionInfo != null -> {
                 val isGrams = UnitConverter.isGramsUnit(targetFood.unit)
+                // Phase 17: Weight override from clarification takes priority over FDC servingWeightG
+                val clarification = state.clarificationResolutions[state.selectedParsedFoodIndex]
+                val effectiveServingWeightG = clarification?.weightOverrideG ?: nutritionInfo.servingWeightG
                 // Per-UNIT multiplier: multiplier for exactly 1 unit (not all qty units).
                 val perUnitMultiplier = UnitConverter.computeServingMultiplier(
                     quantity = 1.0,
                     unit = targetFood.unit,
-                    servingWeightG = nutritionInfo.servingWeightG
+                    servingWeightG = effectiveServingWeightG
                 )
                 resolvedCalories = if (isGrams) nutritionInfo.caloriesPer100g.formatMacro()
                                    else (nutritionInfo.caloriesPer100g * perUnitMultiplier).formatMacro()
@@ -809,6 +908,7 @@ class LogViewModel @Inject constructor(
                 nutritionLookups = emptyMap(),
                 ingredientNutritionLookups = emptyMap(),
                 recipeOverrides = emptySet(),
+                clarificationResolutions = emptyMap(),
                 // Phase 11: also clear label extraction state
                 isExtractingLabel = false,
                 labelExtractionError = null,

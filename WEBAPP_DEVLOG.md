@@ -21,6 +21,8 @@
 - [Phase W7: Sign-Up Flow — Confirmation Before Sign-In](#phase-w7-sign-up-flow--confirmation-before-sign-in)
 - [Phase W7.5: Responsive Insight Charts](#phase-w75-responsive-insight-charts)
 - [Phase W8: Discrete Unit Macro Fix + Preview Card Correction](#phase-w8-discrete-unit-macro-fix--preview-card-correction)
+- [Phase W9: Manual Recipe Builder + Catalog Navigation Fix + Catalog Miss Bug](#phase-w9-manual-recipe-builder--catalog-navigation-fix--catalog-miss-bug)
+- [Phase W10: Serving Size Clarification — Brand-Aware Nutrition Lookup](#phase-w10-serving-size-clarification--brand-aware-nutrition-lookup)
 - [Architecture Decisions](#architecture-decisions)
 - [Known Issues & Tech Debt](#known-issues--tech-debt)
 
@@ -841,6 +843,89 @@ supabase functions deploy parse-food   # recipe catalog fallback for is_recipe=f
 | W37 | Pre-mutate Zustand store before `router.push("/log")` from catalog FAB | Next.js `router.push` does not serialise component state into the URL. The Log page reads `isRecipeMode` from the Zustand store on mount — store must be set before navigation, not after. |
 | W38 | Recipe catalog fallback in `parse-food` Edge Function (not client-side) | Catalog resolution is server-side for the webapp (unlike Android where `ResolveCatalogCacheUseCase` runs client-side). The fallback must live in the Edge Function so the returned `catalogMatch` is accurate before `use-nutrition-lookup.ts` reads it. |
 | W39 | Two-query fallback rather than OR query | `ilike("name", ...).eq("catalog_id", ...)` is already indexed. Running two sequential queries (ingredient → recipe) is simpler and equally fast at this scale. An OR across two `catalog_id` values would require query restructuring and would complicate the "which catalog did it come from?" tracking if ever needed. |
+
+---
+
+## Phase W10: Serving Size Clarification — Brand-Aware Nutrition Lookup
+
+**Status:** ✅ Completed
+**Date:** May 27, 2026
+
+### Summary
+
+Foods with variable serving sizes (bread slices, cheese slices, tortillas, protein bars) now trigger an interactive clarification flow. The AI prompt detects serving-size ambiguity and sets `needs_clarification: true` with a helpful hint. The nutrition lookup is paused until the user resolves the ambiguity by:
+
+1. **"Use generic"** — accept the standard USDA/IFCT estimate
+2. **Brand name** — trigger a brand-specific FDC Branded lookup (e.g. "Nature's Own" → FDC branded wheat bread)
+3. **Weight override** — provide an explicit gram weight per serving unit (e.g. "40g")
+
+The `lookup-nutrition` Edge Function was rewritten with a tiered fallback strategy: FDC Branded (when brand provided) → FDC All Types → IFCT full phrase → IFCT word-by-word → null. Each result includes a `matchType` field ("branded" / "generic" / null) for transparent match quality badges in the UI.
+
+Cross-platform parity with Android Phase 17.
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `supabase/functions/_shared/prompts.ts` | Updated | Added SERVING SIZE AMBIGUITY DETECTION section to system prompt with variable-size food examples. Updated JSON schema with `needs_clarification` (boolean) and `clarification_hint` (string/null) fields. |
+| 2 | `supabase/functions/_shared/fdc-mapper.ts` | Updated | Added `matchType: "branded" \| "generic" \| null` to `NutritionInfo` interface. Set `matchType: null` in `mapFdcToNutritionInfo()` (caller overrides). |
+| 3 | `supabase/functions/parse-food/index.ts` | Updated | Pass through `needsClarification` and `clarificationHint` in response. Catalog match overrides: `needsClarification: match ? false : (food.needs_clarification ?? false)`. |
+| 4 | `supabase/functions/lookup-nutrition/index.ts` | Rewritten | Brand-aware tiered fallback. New request shape: `{ foodNames, brands? }`. Extracted `searchFdc()` helper. Tier 1a: FDC Branded (matchType: "branded"), Tier 1b: FDC All Types (matchType: "generic"), Tier 2–3: IFCT (matchType: "generic"), Tier 4: null. |
+| 5 | `webapp/lib/types/ai.ts` | Updated | Added `needsClarification`, `clarificationHint` to `ParsedFood`. Added `matchType` to `NutritionInfo` and `LookupNutritionResponse.results[]`. |
+| 6 | `webapp/lib/stores/log-form-store.ts` | Updated | Added `ClarificationType`, `ClarificationResolution` types. Added `clarificationResolutions` state and `resolveClarification()` action. Updated `acceptParsedFood()` to use weight override from clarification. |
+| 7 | `webapp/lib/hooks/use-nutrition-lookup.ts` | Updated | `lookupNutrition()` accepts optional `brand` parameter. `lookupAll()` skips `needsClarification` items. |
+| 8 | `webapp/components/clarification-input.tsx` | Created | `ClarificationInput` banner: hint text, input field, "Use generic" / "Update & Lookup" buttons. `MatchTypeBadge`: green "Exact brand match" / amber "Generic estimate" / amber "Brand not found, using generic". |
+| 9 | `webapp/components/parsed-food-card.tsx` | Updated | New props: `clarificationResolution`, `onUseGeneric`, `onSubmitClarification`. Shows `ClarificationBanner` when `needsClarification && !resolved`. Shows `MatchTypeBadge` after nutrition resolves. Hides nutrition status during active clarification. |
+| 10 | `webapp/components/ai-input-section.tsx` | Updated | Added `handleUseGeneric(index)` and `handleSubmitClarification(index, input)` handlers. Weight vs brand detection via regex. Passes clarification props to ParsedFoodCard. |
+
+### Key Implementation Details
+
+**Tiered fallback in `lookup-nutrition/index.ts`:**
+```ts
+// Tier 1a: Brand-specific FDC (when brand provided)
+if (brand) {
+  const branded = await searchFdc(`${brand} ${name}`, "Branded");
+  if (branded) return { ...branded, matchType: "branded" };
+}
+// Tier 1b: FDC All Types (generic)
+const generic = await searchFdc(name);
+if (generic) return { ...generic, matchType: "generic" };
+// Tier 2–3: IFCT fallback → Tier 4: null
+```
+
+**Weight override priority in `log-form-store.ts`:**
+```ts
+const clarification = state.clarificationResolutions[index];
+const weightOverride = clarification?.weightOverrideG;
+const swg = weightOverride ?? nutrition?.servingWeightG;
+```
+
+**Clarification detection in `ai-input-section.tsx`:**
+```ts
+const weightMatch = input.match(/^(\d+\.?\d*)\s*g?$/i);
+if (weightMatch) {
+  resolveClarification(index, "weight", String(weightG));
+} else {
+  resolveClarification(index, "brand", input);
+}
+```
+
+### Edge Function Deployment Required
+
+```bash
+supabase functions deploy parse-food        # needs_clarification pass-through
+supabase functions deploy lookup-nutrition   # brand-aware tiered fallback + matchType
+```
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| W40 | AI-level ambiguity detection over client-side heuristics | The Gemini model has food knowledge to determine which items have genuinely variable serving sizes. Client heuristics (e.g. "if unit is slice") would be brittle and miss edge cases. |
+| W41 | Tiered FDC fallback: Branded → All Types → IFCT | Brand-specific data is most accurate for variable-size products. Graceful degradation ensures the user always gets some estimate rather than nothing. |
+| W42 | `matchType` field for transparent match quality | Users need to know whether "120 kcal per slice" came from the exact brand they specified or a generic USDA average. Badge color (green vs amber) communicates confidence without requiring nutrition literacy. |
+| W43 | Weight override applied client-side, not server-side | When the user says "my bread slices are 40g each", the per-100g macros from USDA are unchanged — only the serving multiplier changes. Applying the override in `acceptParsedFood()` keeps the lookup pipeline clean and avoids re-fetching data. |
+| W44 | Nutrition lookup paused until clarification resolved | Firing a generic lookup immediately and then overwriting it wastes an API call and causes a visual flicker (loading → found → loading → found). Pausing until the user acts is cleaner UX. |
 
 ---
 

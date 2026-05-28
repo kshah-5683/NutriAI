@@ -77,7 +77,11 @@ data class GeminiParsedFoodDto(
     val confidence: Double = 0.0,
     @SerialName("is_recipe")
     val isRecipe: Boolean = false,
-    val ingredients: List<GeminiParsedFoodDto> = emptyList()
+    val ingredients: List<GeminiParsedFoodDto> = emptyList(),
+    @SerialName("needs_clarification")
+    val needsClarification: Boolean = false,
+    @SerialName("clarification_hint")
+    val clarificationHint: String? = null
 )
 
 /**

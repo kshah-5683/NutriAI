@@ -59,7 +59,9 @@ class NutritionLookupDelegate(
                     }
                 }
             } else {
-                if (catalogMatch?.isFromCatalog != true) {
+                // Phase 17: Skip items needing clarification — they'll be looked up
+                // after the user resolves the ambiguity via resolveClarification*()
+                if (catalogMatch?.isFromCatalog != true && !food.needsClarification) {
                     initialLookups[index] = NutritionLookupState.Loading
                 }
             }
@@ -78,7 +80,7 @@ class NutritionLookupDelegate(
         coroutineScope.launch {
             val flatFoodJobs = parsedFoods.mapIndexedNotNull { index, food ->
                 val catalogMatch = catalogMatches.getOrNull(index)
-                if (!food.isRecipe && catalogMatch?.isFromCatalog != true) {
+                if (!food.isRecipe && catalogMatch?.isFromCatalog != true && !food.needsClarification) {
                     async {
                         val state = performNutritionLookup(food.name)
                         uiState.update { current ->
@@ -117,8 +119,8 @@ class NutritionLookupDelegate(
      * Performs a single nutrition lookup for the given food name.
      * Returns the resulting [NutritionLookupState].
      */
-    suspend fun performNutritionLookup(foodName: String): NutritionLookupState {
-        return when (val result = lookupNutritionUseCase(foodName)) {
+    suspend fun performNutritionLookup(foodName: String, brand: String? = null): NutritionLookupState {
+        return when (val result = lookupNutritionUseCase(foodName, brand = brand)) {
             is Resource.Success -> {
                 if (result.data != null) {
                     NutritionLookupState.Found(result.data)
@@ -130,6 +132,24 @@ class NutritionLookupDelegate(
                 result.message ?: "Nutrition lookup failed"
             )
             is Resource.Loading -> NutritionLookupState.NotFound
+        }
+    }
+
+    /**
+     * Phase 17: Performs a single nutrition lookup and updates the UI state.
+     * Used by clarification actions (brand-aware re-lookup, generic resolve, weight override).
+     *
+     * @param index The parsed food index
+     * @param foodName The food name to search
+     * @param brand Optional brand name for brand-specific FDC lookup
+     */
+    suspend fun performAndUpdateLookup(index: Int, foodName: String, brand: String? = null) {
+        uiState.update { current ->
+            current.copy(nutritionLookups = current.nutritionLookups + (index to NutritionLookupState.Loading))
+        }
+        val state = performNutritionLookup(foodName, brand)
+        uiState.update { current ->
+            current.copy(nutritionLookups = current.nutritionLookups + (index to state))
         }
     }
 }

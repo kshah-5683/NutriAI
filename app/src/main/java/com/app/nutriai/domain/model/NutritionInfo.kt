@@ -25,6 +25,10 @@ package com.app.nutriai.domain.model
  *   Sourced from FDC `servingSize` when `servingSizeUnit` is "g". Used by [UnitConverter] to
  *   compute the correct multiplier for discrete units (e.g. 1 piece egg = 50g → 0.5 × per-100g).
  *   Null for volumetric units or when FDC does not report a gram-based serving size.
+ * @property matchType Indicates the quality of the nutrition match:
+ *   - "branded" — exact brand match from FDC Branded database (high confidence)
+ *   - "generic" — generic/unbranded match from FDC Foundation/SR Legacy or IFCT (moderate confidence)
+ *   - null — not yet determined or not applicable (e.g. catalog-sourced data)
  */
 data class NutritionInfo(
     val productName: String,
@@ -36,5 +40,6 @@ data class NutritionInfo(
     val fiberPer100g: Double? = null,
     val source: String = "USDA FoodData Central",
     val externalId: String? = null,
-    val servingWeightG: Double? = null
+    val servingWeightG: Double? = null,
+    val matchType: String? = null
 )

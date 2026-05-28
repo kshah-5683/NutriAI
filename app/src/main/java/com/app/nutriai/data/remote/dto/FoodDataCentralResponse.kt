@@ -109,6 +109,7 @@ fun FdcFood.toNutritionInfo(): NutritionInfo? {
         fiberPer100g = fiberPer100g?.coerceAtLeast(0.0),
         source = "USDA FoodData Central",
         externalId = fdcId?.toString(),
-        servingWeightG = servingWeightG
+        servingWeightG = servingWeightG,
+        matchType = null // Caller sets to "branded" or "generic" based on lookup tier
     )
 }

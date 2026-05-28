@@ -28,18 +28,19 @@ import javax.inject.Inject
  * - All failures are still logged to logcat via [NutritionRepository] for debugging.
  *
  * @param foodName The AI-extracted or user-typed food name
+ * @param brand Optional brand name for brand-specific FDC lookup
  * @return [Resource.Success] with the best [NutritionInfo] match, or null if not found/failed;
  *         [Resource.Error] only for HTTP 429 rate-limit
  */
 class LookupNutritionUseCase @Inject constructor(
     private val nutritionRepository: NutritionRepository
 ) {
-    suspend operator fun invoke(foodName: String): Resource<NutritionInfo?> {
+    suspend operator fun invoke(foodName: String, brand: String? = null): Resource<NutritionInfo?> {
         if (foodName.isBlank()) {
             return Resource.Success(null)
         }
 
-        return when (val result = nutritionRepository.searchNutrition(foodName.trim())) {
+        return when (val result = nutritionRepository.searchNutrition(foodName.trim(), brand?.trim())) {
             is Resource.Success -> Resource.Success(result.data.firstOrNull())
 
             is Resource.Error -> {

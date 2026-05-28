@@ -29,9 +29,11 @@ export function AiInputSection({ onLogAll, onLogAllLoading }: AiInputSectionProp
   const setParsedFoods = useLogFormStore((s) => s.setParsedFoods);
   const nutritionResults = useLogFormStore((s) => s.nutritionResults);
   const nutritionLoading = useLogFormStore((s) => s.nutritionLoading);
+  const clarificationResolutions = useLogFormStore((s) => s.clarificationResolutions);
+  const resolveClarification = useLogFormStore((s) => s.resolveClarification);
 
   const parseMutation = useParseFood();
-  const { lookupAll } = useNutritionLookup();
+  const { lookupNutrition, lookupAll } = useNutritionLookup();
 
   // After parse succeeds, fire nutrition lookups for new items
   useEffect(() => {
@@ -51,6 +53,45 @@ export function AiInputSection({ onLogAll, onLogAllLoading }: AiInputSectionProp
     setParsedFoods([]);
     setAiInput("");
     setAiError(null);
+  };
+
+  /**
+   * User clicked "Use generic" on a clarification banner.
+   * Resolve as generic and trigger standard nutrition lookup.
+   */
+  const handleUseGeneric = (index: number) => {
+    resolveClarification(index, "generic");
+    const food = parsedFoods[index];
+    if (food && !food.catalogMatch?.isFromCatalog) {
+      lookupNutrition(food.name);
+    }
+  };
+
+  /**
+   * User submitted a brand or weight in the clarification input.
+   * Detect whether it's a weight (e.g. "40g", "35") or brand text.
+   */
+  const handleSubmitClarification = (index: number, input: string) => {
+    const food = parsedFoods[index];
+    if (!food) return;
+
+    // Detect weight input: "40g", "40 g", "40", "40.5g"
+    const weightMatch = input.match(/^(\d+\.?\d*)\s*g?$/i);
+    if (weightMatch) {
+      const weightG = parseFloat(weightMatch[1]);
+      resolveClarification(index, "weight", String(weightG));
+      // For weight overrides, trigger a standard lookup (no brand)
+      // The weight override will be applied client-side in acceptParsedFood
+      if (!food.catalogMatch?.isFromCatalog) {
+        lookupNutrition(food.name);
+      }
+    } else {
+      // Treat as brand name — trigger brand-aware lookup
+      resolveClarification(index, "brand", input);
+      if (!food.catalogMatch?.isFromCatalog) {
+        lookupNutrition(food.name, input);
+      }
+    }
   };
 
   const hasParsedFoods = parsedFoods.length > 0;
@@ -123,6 +164,9 @@ export function AiInputSection({ onLogAll, onLogAllLoading }: AiInputSectionProp
               nutritionInfo={nutritionResults[food.name]}
               nutritionLoading={nutritionLoading[food.name] ?? false}
               onSelect={selectFood}
+              clarificationResolution={clarificationResolutions[i]}
+              onUseGeneric={handleUseGeneric}
+              onSubmitClarification={handleSubmitClarification}
             />
           ))}
 

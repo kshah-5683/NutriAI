@@ -161,7 +161,9 @@ class AiRepositoryImpl @Inject constructor(
                             unit = ingDto.unit.trim().ifBlank { "serving" },
                             confidence = ingDto.confidence.coerceIn(0.0, 1.0)
                         )
-                    }
+                    },
+                    needsClarification = dto.needsClarification,
+                    clarificationHint = dto.clarificationHint
                 )
             }
 

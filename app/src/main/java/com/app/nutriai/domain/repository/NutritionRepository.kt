@@ -13,14 +13,20 @@ import com.app.nutriai.util.Resource
 interface NutritionRepository {
 
     /**
-     * Search for nutrition data by food name.
+     * Search for nutrition data by food name, optionally with a brand.
      *
      * Returns a ranked list of [NutritionInfo] matches (best match first).
      * The caller ([LookupNutritionUseCase]) picks the most relevant result.
      *
+     * When [brand] is provided, the implementation should first attempt a
+     * brand-specific lookup (FDC Branded dataType) before falling back to
+     * the generic all-types search. Results include [NutritionInfo.matchType]
+     * set to "branded" or "generic" accordingly.
+     *
      * @param foodName The food name to search for (AI-extracted or user-typed)
+     * @param brand Optional brand name for brand-specific FDC lookup
      * @return [Resource.Success] with a list of matches (possibly empty),
      *         or [Resource.Error] on network/parsing failure
      */
-    suspend fun searchNutrition(foodName: String): Resource<List<NutritionInfo>>
+    suspend fun searchNutrition(foodName: String, brand: String? = null): Resource<List<NutritionInfo>>
 }

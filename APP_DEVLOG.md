@@ -26,6 +26,8 @@
 - [Phase 12: Unit Parity, Macro Calculation Fixes & RLS Hardening](#phase-12-unit-parity-macro-calculation-fixes--rls-hardening)
 - [Phase 13: Grams Display Fix & Catalog-Hit Quantity Correction](#phase-13-grams-display-fix--catalog-hit-quantity-correction)
 - [Phase 14: Macro Goals Cross-Platform Sync](#phase-14-macro-goals-cross-platform-sync)
+- [Phase 16: Manual Recipe Builder + Catalog Navigation Fix + Catalog Miss Bug](#phase-16-manual-recipe-builder--catalog-navigation-fix--catalog-miss-bug)
+- [Phase 17: Serving Size Clarification — Brand-Aware Nutrition Lookup](#phase-17-serving-size-clarification--brand-aware-nutrition-lookup)
 - [Architecture Decisions](#architecture-decisions)
 - [Known Issues & Tech Debt](#known-issues--tech-debt)
 
@@ -1768,6 +1770,95 @@ val match = ingredientMatch ?: foodRepository.searchFoodByNameExact(
 | 61 | `updateFoodName()` must NOT clear `isLoggingRecipe` | Editing the recipe name is not a mode change. Clearing `isLoggingRecipe` on every keystroke collapses the ingredient list mid-editing, which is a destructive UX regression. Mode changes are only initiated explicitly by the user. |
 | 62 | Dual-catalog fallback in `ResolveCatalogCacheUseCase` | Gemini's `isRecipe` classification is heuristic — a recipe the user already logged (stored in `RECIPE_CATALOG_ID`) may be returned as `isRecipe=false` on subsequent parses. Falling back to the recipe catalog prevents an unnecessary external API call and ensures catalog items are always reused regardless of AI classification drift. |
 | 63 | Two-row layout for `ManualRecipeIngredientRow` (name + remove / qty + unit) | Placing all four controls in a single horizontal Row left the ingredient name field only ~84dp on a 360dp phone — too narrow for `OutlinedTextField` to render without vertical letter overflow. Splitting into two rows gives the name field the full card width (minus remove button), matching the webapp's `flex-col sm:flex-row` responsive pattern. |
+
+---
+
+## Phase 17: Serving Size Clarification — Brand-Aware Nutrition Lookup
+
+**Status:** ✅ Completed
+**Date:** May 27, 2026
+
+### Summary
+
+Foods with variable serving sizes (bread slices, cheese slices, tortillas, protein bars) now trigger an interactive clarification flow on the Log screen. The Gemini prompt detects serving-size ambiguity and sets `needsClarification = true` with a helpful hint. The nutrition lookup is paused until the user resolves the ambiguity by:
+
+1. **"Use generic"** — accept the standard USDA/IFCT estimate
+2. **Brand name** — trigger a brand-specific FDC Branded lookup (e.g. "Nature's Own" → FDC branded wheat bread)
+3. **Weight override** — provide an explicit gram weight per serving unit (e.g. 40g)
+
+The Android `NutritionRepositoryImpl` now supports a brand-aware tiered fallback: FDC Branded (when brand provided) → FDC All Types → IFCT full phrase → IFCT word-by-word → null. Each result includes a `matchType` field ("branded" / "generic" / null) for transparent match quality badges in the Compose UI.
+
+Cross-platform parity with webapp Phase W10.
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `util/GeminiPrompts.kt` | Updated | Added SERVING SIZE AMBIGUITY DETECTION section to `SYSTEM_INSTRUCTION`. Updated JSON schema in `buildUserPrompt()` with `needs_clarification` (Boolean) and `clarification_hint` (String?) fields. Mirrors webapp `prompts.ts`. |
+| 2 | `data/remote/dto/GeminiResponse.kt` | Updated | Added `needsClarification: Boolean = false` and `clarificationHint: String? = null` to `GeminiParsedFoodDto`. |
+| 3 | `domain/model/ParsedFood.kt` | Updated | Added `needsClarification: Boolean = false` and `clarificationHint: String? = null` to domain model. |
+| 4 | `domain/model/NutritionInfo.kt` | Updated | Added `matchType: String? = null` for "branded"/"generic"/null. |
+| 5 | `data/repository/AiRepositoryImpl.kt` | Updated | DTO→domain mapping now includes `needsClarification` and `clarificationHint`. |
+| 6 | `domain/repository/NutritionRepository.kt` | Updated | `searchNutrition()` signature extended with `brand: String? = null` parameter. |
+| 7 | `domain/usecase/LookupNutritionUseCase.kt` | Updated | Added `brand: String? = null` parameter, passes to repository. |
+| 8 | `data/repository/NutritionRepositoryImpl.kt` | Updated | Brand-aware tiered fallback: Tier 1a: FDC Branded (`tryFdc("$brand $foodName", dataType = "Branded")`) → Tier 1b: FDC All Types → Tier 2–3: IFCT → null. Added `dataType` parameter to `tryFdc()`. Added `mapResults()` extension for applying `matchType`. |
+| 9 | `data/remote/dto/FoodDataCentralResponse.kt` | Updated | Added `matchType = null` to `toNutritionInfo()` return. |
+| 10 | `data/local/entity/IfctFoodEntity.kt` | Updated | Added `matchType = null` to `toNutritionInfo()` return. |
+| 11 | `presentation/screens/log/LogViewModel.kt` | Updated | Added `ClarificationType` enum, `ClarificationResolution` data class, `clarificationResolutions` state in `LogUiState`. Added `resolveClarificationGeneric()`, `resolveClarificationWithBrand()`, `resolveClarificationWithWeight()`. Updated `acceptParsedFood()` to use `effectiveServingWeightG` from clarification override. Reset `clarificationResolutions` in `clearParsedFoods`/`parseWithAi`. |
+| 12 | `presentation/screens/log/NutritionLookupDelegate.kt` | Updated | `performNutritionLookup()` accepts `brand: String? = null`. Added `performAndUpdateLookup(index, foodName, brand?)` for single-item re-lookups. Initial batch lookup skips `food.needsClarification` items. |
+| 13 | `presentation/screens/log/LogScreen.kt` | Updated | Added `ClarificationBanner` composable: Card with warning hint, `OutlinedTextField`, "Use generic" / "Update & Lookup" buttons. Added `MatchTypeBadge` composable: `Surface` chip with color-coded text (green branded / amber generic). Wired into `ParsedFoodCard` — shows banner when `needsClarification && !resolved`, shows badge after nutrition resolves. Added `Surface` import. |
+
+### Key Implementation Details
+
+**Brand-aware tiered fallback in `NutritionRepositoryImpl`:**
+```kotlin
+override suspend fun searchNutrition(foodName: String, brand: String?): Resource<NutritionInfo> {
+    // Tier 1a: FDC Branded (when brand provided)
+    if (brand != null) {
+        val branded = tryFdc("$brand $foodName", dataType = "Branded")
+        if (branded != null) return Resource.Success(branded.mapResults("branded"))
+    }
+    // Tier 1b: FDC All Types (generic)
+    val generic = tryFdc(foodName)
+    if (generic != null) return Resource.Success(generic.mapResults("generic"))
+    // Tier 2–3: IFCT → Tier 4: null
+}
+```
+
+**Weight override priority in `LogViewModel.acceptParsedFood()`:**
+```kotlin
+val clarification = state.clarificationResolutions[state.selectedParsedFoodIndex]
+val effectiveServingWeightG = clarification?.weightOverrideG ?: nutritionInfo.servingWeightG
+val perUnitMultiplier = UnitConverter.computeServingMultiplier(
+    quantity = 1.0,
+    unit = targetFood.unit,
+    servingWeightG = effectiveServingWeightG
+)
+```
+
+**ClarificationBanner Compose UI:**
+```kotlin
+@Composable
+private fun ClarificationBanner(
+    hint: String,
+    onUseGeneric: () -> Unit,
+    onSubmitClarification: (String) -> Unit,
+    isLoading: Boolean = false
+) {
+    var inputText by remember { mutableStateOf("") }
+    // Card with hint, OutlinedTextField, two action buttons
+}
+```
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| 64 | AI-level ambiguity detection over client-side heuristics | The Gemini model has food knowledge to determine which items have genuinely variable serving sizes. Client heuristics (e.g. "if unit is slice") would be brittle and miss edge cases like protein bars vs candy bars. |
+| 65 | Brand-aware tiered FDC fallback in `NutritionRepositoryImpl` | Brand-specific data is most accurate for variable-size products. Graceful degradation (branded → generic → IFCT → null) ensures the user always gets some estimate. |
+| 66 | `matchType` field for transparent match quality in UI | Badge color (green vs amber) communicates whether macros came from an exact brand match or a generic USDA average, helping users decide whether to trust or override the values. |
+| 67 | Weight override applied in `acceptParsedFood()`, not in the lookup | When the user says "my bread slices are 40g", the per-100g macros from USDA are unchanged — only the serving multiplier changes. Applying the override at form-fill time keeps the lookup pipeline clean. |
+| 68 | Nutrition lookup paused until clarification resolved | Firing a generic lookup and then overwriting it wastes bandwidth and causes a visual flicker. Pausing until the user acts is cleaner UX and consistent with the webapp (Phase W10). |
 
 ---
 

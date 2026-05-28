@@ -9,6 +9,22 @@ import type { FoodItem } from "@/lib/types/domain";
 export type InputMode = "ai" | "manual" | "scan";
 
 /**
+ * How a serving-size ambiguity was resolved for a specific parsed food item.
+ * - "generic" — user accepted the generic USDA estimate
+ * - "brand" — user provided a brand name for brand-specific lookup
+ * - "weight" — user provided an explicit gram weight per serving unit
+ */
+export type ClarificationType = "generic" | "brand" | "weight";
+
+export interface ClarificationResolution {
+  type: ClarificationType;
+  /** Brand name provided by the user (only when type === "brand") */
+  brand?: string;
+  /** Gram weight per unit provided by the user (only when type === "weight") */
+  weightOverrideG?: number;
+}
+
+/**
  * A single ingredient row in the manual recipe builder.
  * Macros are stored as per-100g strings (same convention as the flat manual form).
  * For discrete units (piece, slice, bowl), macros represent per-unit values.
@@ -59,6 +75,10 @@ interface LogFormState {
   nutritionResults: Record<string, NutritionInfo | null>;
   nutritionLoading: Record<string, boolean>;
 
+  // Serving size clarification state — keyed by parsed food index
+  // Absent key = not yet resolved (clarification banner is showing)
+  clarificationResolutions: Record<number, ClarificationResolution>;
+
   // Manual form state — flat ingredient mode
   foodName: string;
   brand: string;
@@ -100,6 +120,19 @@ interface LogFormState {
     suggested_unit: string;
   }) => void;
   setManualField: (field: string, value: string) => void;
+
+  // Clarification actions
+  /**
+   * Resolve a serving-size clarification for a parsed food item.
+   * - "generic": accept the generic USDA estimate, proceed with standard lookup
+   * - "brand": re-lookup with brand-specific FDC query
+   * - "weight": override servingWeightG client-side (no re-lookup needed)
+   */
+  resolveClarification: (
+    index: number,
+    type: ClarificationType,
+    value?: string
+  ) => void;
 
   // Recipe mode actions
   /** Toggle Recipe/Ingredient mode. Ingredient list is preserved across toggles. */
@@ -153,6 +186,7 @@ const initialAiState = {
   aiError: null as string | null,
   nutritionResults: {} as Record<string, NutritionInfo | null>,
   nutritionLoading: {} as Record<string, boolean>,
+  clarificationResolutions: {} as Record<number, ClarificationResolution>,
 };
 
 // ─── Store ────────────────────────────────────────────────────────────────────
@@ -205,10 +239,15 @@ export const useLogFormStore = create<LogFormState>((set, get) => ({
 
     const nutrition = state.nutritionResults[food.name] ?? null;
 
+    // Check for weight override from clarification resolution
+    const clarification = state.clarificationResolutions[index];
+    const weightOverride = clarification?.weightOverrideG;
+
     // Discrete units where servingWeightG enables per-unit pre-scaling
     const discreteUnits = ["piece", "pieces", "slice", "slices", "bowl", "bowls"];
     const isDiscrete = discreteUnits.includes(food.unit.toLowerCase().trim());
-    const swg = nutrition?.servingWeightG;
+    // Weight override from clarification takes priority over FDC servingWeightG
+    const swg = weightOverride ?? nutrition?.servingWeightG;
     const shouldPreScale = isDiscrete && swg != null && swg > 0;
 
     // Pre-scale factor: converts per-100g → per-unit (e.g. 50g egg → 0.5)
@@ -249,6 +288,26 @@ export const useLogFormStore = create<LogFormState>((set, get) => ({
   },
 
   setManualField: (field, value) => set({ [field]: value }),
+
+  // ─── Clarification actions ─────────────────────────────────────────────────
+
+  resolveClarification: (index, type, value) =>
+    set((state) => {
+      const resolution: ClarificationResolution = { type };
+
+      if (type === "brand" && value) {
+        resolution.brand = value;
+      } else if (type === "weight" && value) {
+        resolution.weightOverrideG = parseFloat(value) || undefined;
+      }
+
+      return {
+        clarificationResolutions: {
+          ...state.clarificationResolutions,
+          [index]: resolution,
+        },
+      };
+    }),
 
   // ─── Recipe mode actions ────────────────────────────────────────────────────
 

@@ -17,6 +17,12 @@ package com.app.nutriai.domain.model
  * @property confidence AI confidence score (0.0–1.0) for the extraction
  * @property isRecipe Whether this is a recipe with nested ingredients
  * @property ingredients Component foods when [isRecipe] is true; empty for flat items
+ * @property needsClarification True when the food has a variable serving size (e.g. bread slices,
+ *   cheese slices) and the user did not specify a brand, weight, or size qualifier. The UI should
+ *   prompt the user for more detail before proceeding with nutrition lookup.
+ * @property clarificationHint A short user-facing prompt explaining why clarification is needed
+ *   (e.g. "Bread slice sizes vary widely (20–60g). Can you specify the brand or weight?").
+ *   Null when [needsClarification] is false.
  */
 data class ParsedFood(
     val name: String,
@@ -24,5 +30,7 @@ data class ParsedFood(
     val unit: String = "serving",
     val confidence: Double = 0.0,
     val isRecipe: Boolean = false,
-    val ingredients: List<ParsedFood> = emptyList()
+    val ingredients: List<ParsedFood> = emptyList(),
+    val needsClarification: Boolean = false,
+    val clarificationHint: String? = null
 )

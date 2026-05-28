@@ -35,6 +35,13 @@ export interface NutritionInfo {
    * Null when FDC does not report a gram-based serving size.
    */
   servingWeightG: number | null;
+  /**
+   * Indicates the quality of the nutrition match:
+   * - "branded" — exact brand match from FDC Branded database (high confidence)
+   * - "generic" — generic/unbranded match from FDC Foundation/SR Legacy or IFCT
+   * - null — not yet determined
+   */
+  matchType: "branded" | "generic" | null;
 }
 
 /** Shape of a single food from the FDC /foods/search response. */
@@ -96,6 +103,7 @@ export function mapFdcToNutritionInfo(food: FdcFood): NutritionInfo | null {
     source: "USDA FoodData Central",
     externalId: food.fdcId?.toString() ?? null,
     servingWeightG,
+    matchType: null, // Caller sets to "branded" or "generic" based on lookup tier
   };
 }
 

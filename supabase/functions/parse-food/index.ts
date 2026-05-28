@@ -196,6 +196,9 @@ serve(async (req) => {
           catalogMatch: match
             ? { isFromCatalog: true, foodItem: mapFoodItem(match) }
             : null,
+          // Catalog match overrides clarification — user's own data is trusted
+          needsClarification: match ? false : (food.needs_clarification ?? false),
+          clarificationHint: match ? null : (food.clarification_hint ?? null),
         };
       })
     );
