@@ -93,6 +93,9 @@
   --text-warning: #B27A00;
   --bg-branded: #D4E8C8;
   --text-branded: #2D5A27;
+  --bg-primary-container: #D4E8C8;
+  --text-on-primary-container: #1B3D17;
+  --color-on-primary: #FFFFFF;
 }
 
 /* ─── Dark theme — Dark Forest ─────────────────────────────────────────── */
@@ -109,6 +112,9 @@
   --text-warning: #FFD95A;
   --bg-branded: #3A4F34;
   --text-branded: #A8D99C;
+  --bg-primary-container: #3A4F34;
+  --text-on-primary-container: #A8D99C;
+  --color-on-primary: #FFFFFF;
 }
 
 /* ─── Base styles ───────────────────────────────────────────────────────── */

@@ -52,7 +52,7 @@ export function ParsedFoodCard({
       className="w-full rounded-lg border p-3 text-left transition-colors"
       style={{
         backgroundColor: isSelected
-          ? "var(--color-primary-container, #D4E8C8)"
+          ? "var(--bg-primary-container)"
           : "var(--bg-surface)",
         borderColor: isSelected
           ? "var(--color-primary)"
@@ -71,9 +71,9 @@ export function ParsedFoodCard({
                 ✓
               </span>
             )}
-            <span className="text-sm font-medium">{food.name}</span>
+            <span className="text-sm font-medium" style={{ color: isSelected ? "var(--text-on-primary-container)" : "var(--text-primary)" }}>{food.name}</span>
           </div>
-          <div className="mt-1 flex items-center gap-2 text-xs" style={{ color: "var(--text-secondary)" }}>
+          <div className="mt-1 flex items-center gap-2 text-xs" style={{ color: isSelected ? "var(--text-on-primary-container)" : "var(--text-secondary)" }}>
             <span>
               {food.quantity} {food.unit}
             </span>
@@ -87,8 +87,8 @@ export function ParsedFoodCard({
           <span
             className="whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium"
             style={{
-              backgroundColor: "var(--color-primary-container, #D4E8C8)",
-              color: "var(--color-primary)",
+              backgroundColor: "var(--bg-branded)",
+              color: "var(--text-branded)",
             }}
           >
             In catalog ✅
@@ -120,14 +120,14 @@ export function ParsedFoodCard({
 
       {/* Nutrition status */}
       {!hasCatalogMatch && !showClarificationBanner && (
-        <div className="mt-2 text-xs" style={{ color: "var(--text-secondary)" }}>
+        <div className="mt-2 text-xs" style={{ color: isSelected ? "var(--text-on-primary-container)" : "var(--text-secondary)" }}>
           {nutritionLoading ? (
             <span className="flex items-center gap-1">
               <LoadingDot /> Looking up nutrition...
             </span>
           ) : nutritionInfo ? (
             <div className="flex flex-col gap-1">
-              <span style={{ color: "var(--color-primary)" }}>
+              <span style={{ color: isSelected ? "var(--text-on-primary-container)" : "var(--text-branded)" }}>
                 {Math.round(nutritionInfo.caloriesPer100g)} kcal/100g ({nutritionInfo.source})
               </span>
               {/* Match type badge — shows quality of the match */}
@@ -147,12 +147,12 @@ export function ParsedFoodCard({
       {/* Recipe ingredients */}
       {food.isRecipe && food.ingredients.length > 0 && (
         <div className="mt-2 border-t pt-2" style={{ borderColor: "var(--border-variant)" }}>
-          <div className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
+          <div className="text-xs font-medium" style={{ color: isSelected ? "var(--text-on-primary-container)" : "var(--text-secondary)" }}>
             Ingredients:
           </div>
           <div className="mt-1 space-y-1">
             {food.ingredients.map((ing, i) => (
-              <div key={i} className="flex items-center gap-2 text-xs" style={{ color: "var(--text-secondary)" }}>
+              <div key={i} className="flex items-center gap-2 text-xs" style={{ color: isSelected ? "var(--text-on-primary-container)" : "var(--text-secondary)" }}>
                 <span>·</span>
                 <span>
                   {ing.name} — {ing.quantity} {ing.unit}
