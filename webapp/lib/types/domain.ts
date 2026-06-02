@@ -119,4 +119,31 @@ export interface UserPreferences {
   carbsGoal: number;
   fatGoal: number;
   lastModifiedAt: number;
+  // Profile fields (Phase R4: AI Recommendations)
+  age: number | null;
+  gender: string | null;
+  weightKg: number | null;
+  weightGoal: string | null;
+  dietType: string | null;
+  cuisinePreferences: string[];
+  allergies: string[];
+  recommendationsEnabled: boolean;
+}
+
+/**
+ * User's dietary profile — drives internet recommendation personalization.
+ * Port of UserProfile.kt
+ *
+ * All fields are optional. When null/empty, the recommendation prompt omits
+ * that constraint entirely (no defaults assumed).
+ */
+export interface UserProfile {
+  age: number | null;
+  gender: string | null;
+  weightKg: number | null;
+  weightGoal: string | null;       // "lose" | "maintain" | "gain"
+  dietType: string | null;         // "vegetarian" | "veg_eggs" | "non_veg" | "pescatarian" | "vegan"
+  cuisinePreferences: string[];
+  allergies: string[];
+  recommendationsEnabled: boolean;
 }

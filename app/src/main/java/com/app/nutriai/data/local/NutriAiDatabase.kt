@@ -35,6 +35,7 @@ import com.app.nutriai.data.local.entity.UserPreferencesEntity
  *        Prevents tombstone purge from cascade-deleting historical log entries.
  *   v6 — Phase 11: Added LabelPhotoEntity (local-only label photo metadata, 10-day TTL)
  *   v7 — Phase 14: Added UserPreferencesEntity (macro goals cross-platform sync)
+ *   v8 — Phase R4: Added profile columns to UserPreferencesEntity (AI Recommendations)
  */
 @Database(
     entities = [
@@ -46,7 +47,7 @@ import com.app.nutriai.data.local.entity.UserPreferencesEntity
         LabelPhotoEntity::class,
         UserPreferencesEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = true
 )
 abstract class NutriAiDatabase : RoomDatabase() {

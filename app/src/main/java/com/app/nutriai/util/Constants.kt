@@ -6,7 +6,7 @@ package com.app.nutriai.util
 object Constants {
     // Database
     const val DATABASE_NAME = "nutriai_database"
-    const val DATABASE_VERSION = 7
+    const val DATABASE_VERSION = 8
 
     // Sync
     // Reduced from 12h to 24h (Phase 8 Pre-work II): push-on-write + foreground pull handle

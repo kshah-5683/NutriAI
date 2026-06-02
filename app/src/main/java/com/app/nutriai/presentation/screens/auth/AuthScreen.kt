@@ -21,6 +21,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.FitnessCenter
@@ -67,6 +68,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.app.nutriai.domain.model.AuthState
 import com.app.nutriai.domain.model.MacroGoals
+import com.app.nutriai.domain.model.UserProfile
 import com.app.nutriai.presentation.theme.NutriAiTheme
 
 /**
@@ -88,9 +90,12 @@ fun AuthScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val macroGoals by viewModel.macroGoals.collectAsState()
+    val userProfile by viewModel.userProfile.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var showGoalsSheet by rememberSaveable { mutableStateOf(false) }
     val goalsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var showProfileSheet by rememberSaveable { mutableStateOf(false) }
+    val profileSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     // Collect one-time navigation events
     LaunchedEffect(Unit) {
@@ -121,6 +126,7 @@ fun AuthScreen(
     ) { innerPadding ->
         AuthContent(
             uiState = uiState,
+            userProfile = userProfile,
             onEmailChange = viewModel::onEmailChange,
             onPasswordChange = viewModel::onPasswordChange,
             onConfirmPasswordChange = viewModel::onConfirmPasswordChange,
@@ -130,6 +136,7 @@ fun AuthScreen(
             onToggleMode = viewModel::toggleSignUpMode,
             onSyncNow = viewModel::syncNow,
             onOpenGoals = { showGoalsSheet = true },
+            onOpenProfile = { showProfileSheet = true },
             modifier = Modifier.padding(innerPadding)
         )
     }
@@ -150,6 +157,23 @@ fun AuthScreen(
             )
         }
     }
+
+    // AI Recommendations profile setup sheet (Phase R4)
+    if (showProfileSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showProfileSheet = false },
+            sheetState = profileSheetState
+        ) {
+            ProfileSetupSheetContent(
+                initialProfile = userProfile,
+                onSave = { profile ->
+                    viewModel.saveProfile(profile)
+                    showProfileSheet = false
+                },
+                onDismiss = { showProfileSheet = false }
+            )
+        }
+    }
 }
 
 // ─────────────────────────────────────────────
@@ -159,6 +183,7 @@ fun AuthScreen(
 @Composable
 private fun AuthContent(
     uiState: AuthUiState,
+    userProfile: UserProfile = UserProfile(),
     onEmailChange: (String) -> Unit,
     onPasswordChange: (String) -> Unit,
     onConfirmPasswordChange: (String) -> Unit,
@@ -168,6 +193,7 @@ private fun AuthContent(
     onToggleMode: () -> Unit,
     onSyncNow: () -> Unit,
     onOpenGoals: () -> Unit = {},
+    onOpenProfile: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -195,9 +221,11 @@ private fun AuthContent(
                     email = authState.email,
                     isSyncing = uiState.isSyncing,
                     isLoading = uiState.isLoading,
+                    userProfile = userProfile,
                     onSyncNow = onSyncNow,
                     onSignOut = onSignOut,
-                    onOpenGoals = onOpenGoals
+                    onOpenGoals = onOpenGoals,
+                    onOpenProfile = onOpenProfile
                 )
             }
         }
@@ -406,9 +434,11 @@ private fun ProfilePanel(
     email: String,
     isSyncing: Boolean,
     isLoading: Boolean,
+    userProfile: UserProfile = UserProfile(),
     onSyncNow: () -> Unit,
     onSignOut: () -> Unit,
-    onOpenGoals: () -> Unit = {}
+    onOpenGoals: () -> Unit = {},
+    onOpenProfile: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier
@@ -532,6 +562,47 @@ private fun ProfilePanel(
                     }
                 }
                 TextButton(onClick = onOpenGoals) { Text("Edit") }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // AI Recommendations profile card (Phase R4)
+        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AutoAwesome,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Column {
+                        Text(
+                            text = "AI Recommendations",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = if (userProfile.isComplete) "Profile configured"
+                            else "Set up your dietary preferences",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                TextButton(onClick = onOpenProfile) {
+                    Text(if (userProfile.isComplete) "Edit" else "Set Up")
+                }
             }
         }
 

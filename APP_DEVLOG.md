@@ -28,6 +28,7 @@
 - [Phase 14: Macro Goals Cross-Platform Sync](#phase-14-macro-goals-cross-platform-sync)
 - [Phase 16: Manual Recipe Builder + Catalog Navigation Fix + Catalog Miss Bug](#phase-16-manual-recipe-builder--catalog-navigation-fix--catalog-miss-bug)
 - [Phase 17: Serving Size Clarification — Brand-Aware Nutrition Lookup](#phase-17-serving-size-clarification--brand-aware-nutrition-lookup)
+- [Phase 17.1: Clarification Robustness — Prompt Expansion & Brand Validation](#phase-171-clarification-robustness--prompt-expansion--brand-validation)
 - [Architecture Decisions](#architecture-decisions)
 - [Known Issues & Tech Debt](#known-issues--tech-debt)
 
@@ -1859,6 +1860,55 @@ private fun ClarificationBanner(
 | 66 | `matchType` field for transparent match quality in UI | Badge color (green vs amber) communicates whether macros came from an exact brand match or a generic USDA average, helping users decide whether to trust or override the values. |
 | 67 | Weight override applied in `acceptParsedFood()`, not in the lookup | When the user says "my bread slices are 40g", the per-100g macros from USDA are unchanged — only the serving multiplier changes. Applying the override at form-fill time keeps the lookup pipeline clean. |
 | 68 | Nutrition lookup paused until clarification resolved | Firing a generic lookup and then overwriting it wastes bandwidth and causes a visual flicker. Pausing until the user acts is cleaner UX and consistent with the webapp (Phase W10). |
+
+---
+
+## Phase 17.1: Clarification Robustness — Prompt Expansion & Brand Validation
+
+**Status:** ✅ Completed
+**Date:** May 28, 2026
+
+### Summary
+
+Two post-implementation fixes based on real-world testing of Phase 17:
+
+1. **AI prompt expanded to three ambiguity cases** — The original prompt only flagged variable-size discrete units (Case A: "1 slice bread"). Now also flags bare generic food names without type (Case B: "cheese" → cheddar? mozzarella? paneer?) and specific foods without concrete amounts (Case C: "cheddar cheese" → how much?). Hints guide users to specify weight in grams.
+
+2. **FDC Branded result brand validation** — Searching FDC Branded for "Amul cheese" returned "Food Lion cheese" (wrong brand) because FDC's search is keyword-based. Now validates that the top result's `brand` field contains the user's requested brand (case-insensitive). Mismatches fall through to generic tier → UI correctly shows amber "Brand not found, using generic" badge.
+
+Cross-platform parity with webapp Phase W10.1.
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `util/GeminiPrompts.kt` | Updated | Expanded ambiguity detection: Case A (variable discrete units), Case B (bare generic names like "cheese", "bread", "milk"), Case C (specific food without concrete amount like "cheddar cheese", "white bread"). Weight-focused hint style with gram reference points. Mirrors webapp `prompts.ts`. |
+| 2 | `data/repository/NutritionRepositoryImpl.kt` | Updated | Tier 1a brand validation: after `tryFdc("$brand $foodName", dataType = "Branded")`, checks that `topResult.brand` contains the requested brand string (case-insensitive, word-level matching). Mismatches log to TAG and fall through to generic tier. |
+
+### Key Implementation Details
+
+**Brand validation in `NutritionRepositoryImpl.kt`:**
+```kotlin
+val topResult = (brandedResult as? Resource.Success)?.data?.firstOrNull()
+val resultBrand = (topResult?.brand ?: "").lowercase()
+val requestedBrand = brand.lowercase().trim()
+val brandMatches = resultBrand.contains(requestedBrand) ||
+    requestedBrand.split("\\s+".toRegex()).any { word ->
+        word.length > 2 && resultBrand.contains(word)
+    }
+
+if (brandMatches) {
+    return brandedResult.mapResults { it.copy(matchType = "branded") }
+}
+// Fall through to generic — UI shows amber "Brand not found" badge
+```
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| 69 | Three-case ambiguity detection (A/B/C) over single-case | Case A alone missed two common scenarios: bare generic names ("cheese") and specific foods without amounts ("cheddar cheese"). Both produce meaningless default `1 serving` lookups. Case B+C catch these with weight-focused hints. |
+| 70 | Brand validation via result field matching, not query restructuring | FDC's keyword search cannot be constrained to an exact brand. Post-hoc validation (checking the returned `brand` field) is simple, reliable, and degrades gracefully to generic when the brand isn't in FDC. |
 
 ---
 

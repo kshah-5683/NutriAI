@@ -253,6 +253,18 @@ data class RemoteUserPreferencesDto(
     @SerialName("protein_goal") val proteinGoal: Double = 150.0,
     @SerialName("carbs_goal") val carbsGoal: Double = 250.0,
     @SerialName("fat_goal") val fatGoal: Double = 65.0,
+    // ── Profile fields (Phase R4: AI Recommendations) ──
+    val age: Int? = null,
+    val gender: String? = null,
+    @SerialName("weight_kg") val weightKg: Double? = null,
+    @SerialName("weight_goal") val weightGoal: String? = null,
+    @SerialName("diet_type") val dietType: String? = null,
+    /** Supabase TEXT[] deserializes as List<String> via kotlinx.serialization. */
+    @SerialName("cuisine_preferences") val cuisinePreferences: List<String> = emptyList(),
+    /** Supabase TEXT[] deserializes as List<String>. */
+    val allergies: List<String> = emptyList(),
+    @SerialName("recommendations_enabled") val recommendationsEnabled: Boolean = false,
+    // ── End profile fields ──
     /** Server-set timestamp from Postgres trigger. ISO 8601 TIMESTAMPTZ. */
     @SerialName("updated_at") val updatedAt: String? = null
 )
@@ -271,7 +283,18 @@ data class RemoteUserPreferencesPushDto(
     @SerialName("calorie_goal") val calorieGoal: Double,
     @SerialName("protein_goal") val proteinGoal: Double,
     @SerialName("carbs_goal") val carbsGoal: Double,
-    @SerialName("fat_goal") val fatGoal: Double
+    @SerialName("fat_goal") val fatGoal: Double,
+    // ── Profile fields (Phase R4: AI Recommendations) ──
+    val age: Int? = null,
+    val gender: String? = null,
+    @SerialName("weight_kg") val weightKg: Double? = null,
+    @SerialName("weight_goal") val weightGoal: String? = null,
+    @SerialName("diet_type") val dietType: String? = null,
+    /** Supabase TEXT[] — kotlinx.serialization serializes List<String> as JSON array,
+     *  which PostgREST accepts for TEXT[] columns. */
+    @SerialName("cuisine_preferences") val cuisinePreferences: List<String> = emptyList(),
+    val allergies: List<String> = emptyList(),
+    @SerialName("recommendations_enabled") val recommendationsEnabled: Boolean = false
 )
 
 /** Maps a local [UserPreferencesEntity] to [RemoteUserPreferencesPushDto] for Supabase upsert. */
@@ -281,7 +304,24 @@ fun UserPreferencesEntity.toRemoteDto(supabaseUserId: String): RemoteUserPrefere
         calorieGoal = calorieGoal,
         proteinGoal = proteinGoal,
         carbsGoal = carbsGoal,
-        fatGoal = fatGoal
+        fatGoal = fatGoal,
+        // Profile fields — CSV string → List<String> for Supabase TEXT[]
+        age = age,
+        gender = gender,
+        weightKg = weightKg,
+        weightGoal = weightGoal,
+        dietType = dietType,
+        cuisinePreferences = cuisinePreferences
+            ?.split(",")
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?: emptyList(),
+        allergies = allergies
+            ?.split(",")
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?: emptyList(),
+        recommendationsEnabled = recommendationsEnabled
     )
 
 /** Converts a pulled [RemoteUserPreferencesDto] into a local [UserPreferencesEntity]. */
@@ -292,6 +332,19 @@ fun RemoteUserPreferencesDto.toEntity(localUserId: String): UserPreferencesEntit
         proteinGoal = proteinGoal,
         carbsGoal = carbsGoal,
         fatGoal = fatGoal,
+        // Profile fields — List<String> from Supabase TEXT[] → CSV string for Room
+        age = age,
+        gender = gender,
+        weightKg = weightKg,
+        weightGoal = weightGoal,
+        dietType = dietType,
+        cuisinePreferences = cuisinePreferences
+            .filter { it.isNotBlank() }
+            .joinToString(","),
+        allergies = allergies
+            .filter { it.isNotBlank() }
+            .joinToString(","),
+        recommendationsEnabled = recommendationsEnabled,
         isSynced = true,
         lastModifiedAt = System.currentTimeMillis()
     )

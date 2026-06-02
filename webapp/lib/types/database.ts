@@ -161,6 +161,15 @@ export type Database = {
           protein_goal: number;
           carbs_goal: number;
           fat_goal: number;
+          // Profile columns (Phase R4: AI Recommendations)
+          age: number | null;
+          gender: string | null;
+          weight_kg: number | null;
+          weight_goal: string | null;
+          diet_type: string | null;
+          cuisine_preferences: string[];
+          allergies: string[];
+          recommendations_enabled: boolean;
           updated_at: string;
         };
         Insert: {
@@ -169,6 +178,15 @@ export type Database = {
           protein_goal?: number;
           carbs_goal?: number;
           fat_goal?: number;
+          // Profile columns
+          age?: number | null;
+          gender?: string | null;
+          weight_kg?: number | null;
+          weight_goal?: string | null;
+          diet_type?: string | null;
+          cuisine_preferences?: string[];
+          allergies?: string[];
+          recommendations_enabled?: boolean;
           updated_at?: string;
         };
         Update: {
@@ -177,6 +195,15 @@ export type Database = {
           protein_goal?: number;
           carbs_goal?: number;
           fat_goal?: number;
+          // Profile columns
+          age?: number | null;
+          gender?: string | null;
+          weight_kg?: number | null;
+          weight_goal?: string | null;
+          diet_type?: string | null;
+          cuisine_preferences?: string[];
+          allergies?: string[];
+          recommendations_enabled?: boolean;
           updated_at?: string;
         };
         Relationships: [];

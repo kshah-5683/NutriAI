@@ -7,6 +7,7 @@ import com.app.nutriai.data.local.preferences.AuthPreferences
 import com.app.nutriai.data.local.preferences.UserPreferences
 import com.app.nutriai.domain.model.AuthState
 import com.app.nutriai.domain.model.MacroGoals
+import com.app.nutriai.domain.model.UserProfile
 import com.app.nutriai.domain.usecase.GetAuthStateUseCase
 import com.app.nutriai.domain.usecase.SignInUseCase
 import com.app.nutriai.domain.usecase.SignOutUseCase
@@ -215,6 +216,26 @@ class AuthViewModel @Inject constructor(
     fun saveMacroGoals(goals: MacroGoals) {
         viewModelScope.launch {
             userPreferences.saveMacroGoals(goals)
+        }
+    }
+
+    // ─── User Profile (Phase R4: AI Recommendations) ─────────────────────
+
+    /**
+     * Persisted dietary profile — exposed so the profile setup sheet can
+     * read the current values for pre-filling its form fields.
+     */
+    val userProfile: StateFlow<UserProfile> = userPreferences.profileFlow
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = UserProfile()
+        )
+
+    /** Persist updated user profile to Room and trigger Supabase sync. */
+    fun saveProfile(profile: UserProfile) {
+        viewModelScope.launch {
+            userPreferences.saveProfile(profile)
         }
     }
 

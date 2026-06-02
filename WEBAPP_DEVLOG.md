@@ -23,6 +23,7 @@
 - [Phase W8: Discrete Unit Macro Fix + Preview Card Correction](#phase-w8-discrete-unit-macro-fix--preview-card-correction)
 - [Phase W9: Manual Recipe Builder + Catalog Navigation Fix + Catalog Miss Bug](#phase-w9-manual-recipe-builder--catalog-navigation-fix--catalog-miss-bug)
 - [Phase W10: Serving Size Clarification — Brand-Aware Nutrition Lookup](#phase-w10-serving-size-clarification--brand-aware-nutrition-lookup)
+- [Phase W10.1: Clarification Robustness — Prompt Expansion, Brand Validation & Dark Mode Fix](#phase-w101-clarification-robustness--prompt-expansion-brand-validation--dark-mode-fix)
 - [Architecture Decisions](#architecture-decisions)
 - [Known Issues & Tech Debt](#known-issues--tech-debt)
 
@@ -926,6 +927,48 @@ supabase functions deploy lookup-nutrition   # brand-aware tiered fallback + mat
 | W42 | `matchType` field for transparent match quality | Users need to know whether "120 kcal per slice" came from the exact brand they specified or a generic USDA average. Badge color (green vs amber) communicates confidence without requiring nutrition literacy. |
 | W43 | Weight override applied client-side, not server-side | When the user says "my bread slices are 40g each", the per-100g macros from USDA are unchanged — only the serving multiplier changes. Applying the override in `acceptParsedFood()` keeps the lookup pipeline clean and avoids re-fetching data. |
 | W44 | Nutrition lookup paused until clarification resolved | Firing a generic lookup immediately and then overwriting it wastes an API call and causes a visual flicker (loading → found → loading → found). Pausing until the user acts is cleaner UX. |
+
+---
+
+## Phase W10.1: Clarification Robustness — Prompt Expansion, Brand Validation & Dark Mode Fix
+
+**Status:** ✅ Completed
+**Date:** May 28, 2026
+
+### Summary
+
+Three post-implementation fixes based on real-world testing of Phase W10:
+
+1. **AI prompt expanded to three ambiguity cases** — The original prompt only flagged variable-size discrete units (Case A: "1 slice bread"). Now also flags bare generic food names without type (Case B: "cheese" → cheddar? mozzarella? paneer?) and specific foods without concrete amounts (Case C: "cheddar cheese" → how much?). Hints guide users to specify weight in grams.
+
+2. **FDC Branded result brand validation** — Searching FDC Branded for "Amul cheese" returned "Food Lion cheese" (wrong brand) because FDC's search is keyword-based. Now validates that the returned result's `brand` field contains the user's requested brand (case-insensitive). Mismatches fall through to generic tier → UI correctly shows "Brand not found, using generic" badge.
+
+3. **Dark mode readability fix** — Clarification banner, match badges, and selected parsed food card used hardcoded light-mode colors (`#FFF8E1`, `#D4E8C8`) that didn't adapt in dark mode. Added dark-mode-aware semantic CSS variables (`--bg-warning`, `--bg-branded`, `--bg-primary-container`, `--text-on-primary-container`) that swap via `.dark` class — same pattern as Android's `MaterialTheme.colorScheme`.
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `supabase/functions/_shared/prompts.ts` | Updated | Expanded ambiguity detection: Case A (variable discrete units), Case B (bare generic names), Case C (specific food without concrete amount). Weight-focused hints with gram reference points. |
+| 2 | `supabase/functions/lookup-nutrition/index.ts` | Updated | Tier 1a brand validation: checks `brandedResult.brand` contains requested brand (case-insensitive word match). Mismatches log warning and fall through to generic. |
+| 3 | `webapp/app/globals.css` | Updated | Added 8 semantic dark-mode-aware variables: `--bg-warning`/`--border-warning`/`--text-warning`, `--bg-branded`/`--text-branded`, `--bg-primary-container`/`--text-on-primary-container`/`--color-on-primary` with light and dark values. |
+| 4 | `webapp/components/clarification-input.tsx` | Updated | Banner and badge colors switched from hardcoded hex to `var(--bg-warning)`, `var(--text-warning)`, `var(--bg-branded)`, `var(--text-branded)`. |
+| 5 | `webapp/components/parsed-food-card.tsx` | Updated | Selected card background → `var(--bg-primary-container)`. All text elements use `--text-on-primary-container` when selected, `--text-primary`/`--text-secondary` otherwise. Catalog badge uses `--bg-branded`/`--text-branded`. |
+
+### Edge Function Deployment Required
+
+```bash
+supabase functions deploy parse-food        # expanded ambiguity prompt
+supabase functions deploy lookup-nutrition   # brand validation fix
+```
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| W45 | Three-case ambiguity detection (A/B/C) over single-case | Case A alone missed two common scenarios: bare generic names ("cheese") and specific foods without amounts ("cheddar cheese"). Both produce meaningless default `1 serving` lookups. Case B+C catch these with weight-focused hints. |
+| W46 | Brand validation via result field matching, not query restructuring | FDC's keyword search cannot be constrained to an exact brand. Post-hoc validation (checking the returned `brand` field) is simple, reliable, and degrades gracefully to generic when the brand isn't in FDC. |
+| W47 | Semantic dark-mode CSS variables over hardcoded colors | Same pattern as Android's `MaterialTheme.colorScheme` — define role-based tokens (`--bg-warning`, `--bg-primary-container`) that swap values in `.dark`. Components reference one name; the theme handles the rest. |
 
 ---
 

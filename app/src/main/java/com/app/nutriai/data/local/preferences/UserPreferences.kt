@@ -10,6 +10,7 @@ import com.app.nutriai.data.local.entity.UserPreferencesEntity
 import com.app.nutriai.data.sync.SyncEntityType
 import com.app.nutriai.data.sync.SyncPushManager
 import com.app.nutriai.domain.model.MacroGoals
+import com.app.nutriai.domain.model.UserProfile
 import com.app.nutriai.util.Constants
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -69,14 +70,57 @@ class UserPreferences @Inject constructor(
 
     /**
      * Persist updated macro goals to Room and trigger a debounced push to Supabase.
+     *
+     * IMPORTANT: Uses read-before-write to preserve profile columns (Phase R4).
+     * Without this, upserting a new entity with default profile fields would
+     * wipe any saved dietary profile.
      */
     suspend fun saveMacroGoals(goals: MacroGoals) {
-        val entity = UserPreferencesEntity(
-            userId = Constants.LOCAL_USER_ID,
+        val existing = userPreferencesDao.getPreferences(Constants.LOCAL_USER_ID)
+        val entity = (existing ?: UserPreferencesEntity(userId = Constants.LOCAL_USER_ID)).copy(
             calorieGoal = goals.calorieGoal,
             proteinGoal = goals.proteinGoal,
             carbsGoal = goals.carbsGoal,
             fatGoal = goals.fatGoal,
+            isSynced = false,
+            lastModifiedAt = System.currentTimeMillis()
+        )
+        userPreferencesDao.upsertPreferences(entity)
+        syncPushManager.schedulePush(SyncEntityType.USER_PREFERENCES, listOf(Constants.LOCAL_USER_ID))
+    }
+
+    // ─── Profile (Phase R4: AI Recommendations) ─────────────────────────
+
+    /**
+     * Emits the user's dietary profile from Room.
+     * Returns [UserProfile] defaults when no row exists.
+     */
+    val profileFlow: Flow<UserProfile> =
+        userPreferencesDao.getPreferencesFlow(Constants.LOCAL_USER_ID).map { entity ->
+            entity?.toUserProfile() ?: UserProfile()
+        }
+
+    /**
+     * Persist updated profile to Room and trigger a debounced push to Supabase.
+     *
+     * IMPORTANT: This must preserve existing macro goal values.
+     * We read the current entity, overlay profile fields, then upsert.
+     */
+    suspend fun saveProfile(profile: UserProfile) {
+        val existing = userPreferencesDao.getPreferences(Constants.LOCAL_USER_ID)
+        val entity = (existing ?: UserPreferencesEntity(userId = Constants.LOCAL_USER_ID)).copy(
+            age = profile.age,
+            gender = profile.gender,
+            weightKg = profile.weightKg,
+            weightGoal = profile.weightGoal,
+            dietType = profile.dietType,
+            cuisinePreferences = profile.cuisinePreferences
+                .filter { it.isNotBlank() }
+                .joinToString(","),
+            allergies = profile.allergies
+                .filter { it.isNotBlank() }
+                .joinToString(","),
+            recommendationsEnabled = profile.recommendationsEnabled,
             isSynced = false,
             lastModifiedAt = System.currentTimeMillis()
         )

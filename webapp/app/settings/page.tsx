@@ -7,6 +7,7 @@ import { useMacroGoals } from "@/lib/hooks/use-macro-goals";
 import { useUpdateGoals } from "@/lib/hooks/use-update-goals";
 import { MACRO_COLORS } from "@/lib/utils/constants";
 import { ThemeSelector } from "@/components/theme-selector";
+import { ProfileSection } from "./profile-section";
 
 /**
  * Settings page — macro goals CRUD + account actions.
@@ -194,6 +195,9 @@ export default function SettingsPage() {
             )}
           </div>
         )}
+
+        {/* AI Recommendations Profile */}
+        <ProfileSection />
 
         {/* Appearance — Dark mode toggle */}
         <div

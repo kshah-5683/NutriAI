@@ -15,6 +15,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  * Version history:
  *   v3 → v4  Phase 8 Pre-work II: Migration infrastructure scaffolding (no schema change)
  *   v5 → v6  Phase 11: Added label_photos table (nutrition label scanner)
+ *   v7 → v8  Phase R4: Added profile columns to user_preferences (AI Recommendations)
  */
 object Migrations {
 
@@ -149,12 +150,35 @@ object Migrations {
     }
 
     /**
+     * v7 → v8: Add profile columns to user_preferences table (AI Recommendations Phase R4).
+     *
+     * Extends the existing macro goals table with dietary profile fields:
+     * age, gender, weight, weight goal, diet type, cuisine preferences,
+     * allergies, and a recommendations toggle.
+     * All columns are nullable except recommendations_enabled (NOT NULL DEFAULT 0).
+     * Existing rows are unaffected — all new columns use DEFAULT values.
+     */
+    val MIGRATION_7_8 = object : Migration(7, 8) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE user_preferences ADD COLUMN age INTEGER")
+            db.execSQL("ALTER TABLE user_preferences ADD COLUMN gender TEXT")
+            db.execSQL("ALTER TABLE user_preferences ADD COLUMN weight_kg REAL")
+            db.execSQL("ALTER TABLE user_preferences ADD COLUMN weight_goal TEXT")
+            db.execSQL("ALTER TABLE user_preferences ADD COLUMN diet_type TEXT")
+            db.execSQL("ALTER TABLE user_preferences ADD COLUMN cuisine_preferences TEXT")
+            db.execSQL("ALTER TABLE user_preferences ADD COLUMN allergies TEXT")
+            db.execSQL("ALTER TABLE user_preferences ADD COLUMN recommendations_enabled INTEGER NOT NULL DEFAULT 0")
+        }
+    }
+
+    /**
      * All migrations in ascending order. Pass as: `.addMigrations(*Migrations.ALL)`
      */
     val ALL: Array<Migration> = arrayOf(
         MIGRATION_3_4,
         MIGRATION_4_5,
         MIGRATION_5_6,
-        MIGRATION_6_7
+        MIGRATION_6_7,
+        MIGRATION_7_8
     )
 }
