@@ -226,6 +226,7 @@ export const useLogFormStore = create<LogFormState>((set, get) => ({
       parsedFoods: foods,
       selectedIndex: null,
       aiError: null,
+      isParsing: false,
     }),
 
   selectFood: (index) => set({ selectedIndex: index }),

@@ -18,10 +18,14 @@ export function useParseFood() {
   const setIsParsing = useLogFormStore((s) => s.setIsParsing);
 
   return useMutation({
-    mutationFn: async (foodDescription: string) => {
+    // onMutate fires synchronously during mutate() — within the same React
+    // event handler batch as the button click. This guarantees the spinner
+    // and disabled state appear on the very next render, with no gap.
+    onMutate: () => {
       setIsParsing(true);
       setAiError(null);
-
+    },
+    mutationFn: async (foodDescription: string) => {
       const { data, error } = await supabase.functions.invoke(
         EDGE_FUNCTIONS.PARSE_FOOD,
         { body: { foodDescription } }

@@ -66,11 +66,20 @@ export function useNutritionLookup() {
    * Fires parallel lookups for all food names that don't have a catalog match
    * AND don't need clarification (needsClarification items are paused until
    * the user resolves the ambiguity).
+   *
+   * For recipes: also fires lookups for each ingredient individually, since
+   * the log-recipe Edge Function computes the recipe total from per-ingredient
+   * macros (not the recipe-level nutrition lookup).
    */
   const lookupAll = useCallback(
     (
       foods: Array<{
         name: string;
+        isRecipe?: boolean;
+        ingredients?: Array<{
+          name: string;
+          catalogMatch: { isFromCatalog: boolean } | null;
+        }>;
         catalogMatch: { isFromCatalog: boolean } | null;
         needsClarification?: boolean;
       }>
@@ -78,6 +87,14 @@ export function useNutritionLookup() {
       for (const food of foods) {
         if (!food.catalogMatch?.isFromCatalog && !food.needsClarification) {
           lookupNutrition(food.name);
+        }
+        // Recipes: also look up each ingredient that isn't already in the catalog
+        if (food.isRecipe && food.ingredients) {
+          for (const ing of food.ingredients) {
+            if (!ing.catalogMatch?.isFromCatalog) {
+              lookupNutrition(ing.name);
+            }
+          }
         }
       }
     },

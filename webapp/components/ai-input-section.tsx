@@ -97,6 +97,11 @@ export function AiInputSection({ onLogAll, onLogAllLoading }: AiInputSectionProp
 
   const hasParsedFoods = parsedFoods.length > 0;
 
+  // Use TanStack Query's built-in isPending — it's reactive via useSyncExternalStore
+  // under the hood and guaranteed to flip true synchronously when mutate() is called.
+  // The Zustand isParsing flag is kept as a fallback for other consumers.
+  const isParseLoading = parseMutation.isPending || isParsing;
+
   return (
     <div className="space-y-4">
       {/* Text input */}
@@ -122,8 +127,8 @@ export function AiInputSection({ onLogAll, onLogAllLoading }: AiInputSectionProp
       {/* Parse button */}
       <Button
         onClick={handleParse}
-        disabled={isParsing || !aiInput.trim() || aiInput.trim().length < 2}
-        loading={isParsing}
+        disabled={isParseLoading || !aiInput.trim() || aiInput.trim().length < 2}
+        loading={isParseLoading}
         className="w-full"
       >
         ✨ Parse with AI
@@ -204,7 +209,7 @@ export function AiInputSection({ onLogAll, onLogAllLoading }: AiInputSectionProp
       )}
 
       {/* Fallback to manual */}
-      {!hasParsedFoods && !isParsing && (
+      {!hasParsedFoods && !isParseLoading && (
         <div className="text-center">
           <button
             onClick={() => useLogFormStore.getState().setInputMode("manual")}

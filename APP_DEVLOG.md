@@ -30,6 +30,8 @@
 - [Phase 17: Serving Size Clarification — Brand-Aware Nutrition Lookup](#phase-17-serving-size-clarification--brand-aware-nutrition-lookup)
 - [Phase 17.1: Clarification Robustness — Prompt Expansion & Brand Validation](#phase-171-clarification-robustness--prompt-expansion--brand-validation)
 - [Phase 18: Edit Log Macro Scaling Guard — Gram ↔ Non-Gram Boundary](#phase-18-edit-log-macro-scaling-guard--gram--non-gram-boundary)
+- [Phase 19: Catalog Re-Log Macro Fix — Per-100g De-Normalization](#phase-19-catalog-re-log-macro-fix--per-100g-de-normalization)
+- [Phase 20: AI Migration — Direct Gemini → Shared Supabase Edge Functions](#phase-20-ai-migration--direct-gemini--shared-supabase-edge-functions)
 - [Architecture Decisions](#architecture-decisions)
 - [Known Issues & Tech Debt](#known-issues--tech-debt)
 
@@ -2379,6 +2381,155 @@ util/
 
 ---
 
+## Phase 19: Catalog Re-Log Macro Fix — Per-100g De-Normalization
+
+**Status:** ✅ Completed
+**Date:** June 4, 2026
+
+### Summary
+
+Fixed incorrect daily log totals when re-logging a catalog item whose `base_serving_g ≠ 100` (e.g., recipes created via the recipe builder). The `log-food` Edge Function / `LogFoodUseCase` expects **per-serving** macros, but catalog items store **per-100g** macros. Two of three save paths were sending per-100g values without de-normalizing, causing the Edge Function to double-normalize.
+
+**Symptom:** A recipe with 365 kcal per 400g serving (stored as `base_calories = 91.25` per-100g, `base_serving_g = 400`) would log as 91 kcal instead of 365 kcal for 1 serving.
+
+**Root cause:** The Edge Function normalizes incoming macros via `normMacro = rawMacro × (100 / servingG)`. When per-100g values are sent with `servingG = 400`, double-normalization occurs: `91.25 × (100/400) = 22.8`, then `22.8 × scaleFactor(4.0) = 91.25` — producing the per-100g value instead of the per-serving total.
+
+**Fix:** De-normalize catalog macros before sending to the save function: `perServing = per100g × (servingG / 100)`. This mirrors the existing correct logic in `acceptAndLogAllParsed()` (lines 818-821).
+
+### Bug Reproduction
+
+1. Create recipe "Mango Smoothie" via manual recipe builder with ingredients totaling 400g and 365 kcal
+2. Recipe stored: `base_serving_g = 400`, `base_calories = 91.25` (per-100g)
+3. Later, log "mango smoothie" via AI → catalog match found
+4. **Before fix:** Daily log shows 91 kcal (per-100g value, not per-serving)
+5. **After fix:** Daily log shows 365 kcal (correct per-serving total)
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `presentation/screens/log/LogViewModel.kt` | Updated | Added `val servingG: Double = Constants.PER_100G_BASE` to `LogUiState` data class. Preserves the catalog item's actual serving weight for the `saveLog()` de-normalization step. |
+| 2 | `presentation/screens/log/LogViewModel.kt` | Updated | `acceptParsedFood()`: Sets `servingG = cachedFood?.baseServingG ?: Constants.PER_100G_BASE` when populating the manual form from a catalog hit. Defaults to 100 for nutrition-lookup and manual-entry paths. |
+| 3 | `presentation/screens/log/LogViewModel.kt` | Updated | `saveLog()`: Replaced hardcoded `servingG = Constants.PER_100G_BASE` with `state.servingG`. Added `deNorm = actualServingG / PER_100G_BASE` multiplier applied to all macro fields before calling `LogFoodUseCase.invoke()`. For default `servingG = 100`, `deNorm = 1.0` — no change to existing behavior. |
+| 4 | `presentation/screens/log/LogViewModel.kt` | Updated | `updateFoodName()`: Resets `servingG = Constants.PER_100G_BASE` when user edits the food name (breaks catalog link). Prevents stale catalog serving weight from persisting to a new custom item. |
+
+### Key Implementation Details
+
+**De-normalization in `saveLog()`:**
+```kotlin
+val actualServingG = state.servingG
+val deNorm = actualServingG / Constants.PER_100G_BASE
+
+logFoodUseCase(
+    servingG = actualServingG,
+    calories = state.calories.toDouble() * deNorm,
+    protein = (state.protein.toDoubleOrNull() ?: 0.0) * deNorm,
+    carbs = (state.carbs.toDoubleOrNull() ?: 0.0) * deNorm,
+    fat = (state.fat.toDoubleOrNull() ?: 0.0) * deNorm,
+    ...
+)
+```
+
+**Affected paths and status:**
+
+| Path | Before | After |
+|------|--------|-------|
+| `acceptAndLogAllParsed()` (Log All) | ✅ Already correct (had de-normalization) | No change |
+| `acceptParsedFood()` → `saveLog()` (Accept → Log) | ❌ Hardcoded `servingG=100` | ✅ Fixed — uses `state.servingG` + `deNorm` |
+
+**Scope of impact:** Any catalog item where `base_serving_g ≠ 100`, including:
+- All recipes created via the recipe builder (`base_serving_g = N × 100`)
+- Any food edited in the Catalog screen to change its serving size
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| 78 | Store `servingG` in `LogUiState` from catalog item | The `saveLog()` path needs the actual serving weight to de-normalize per-100g form macros to per-serving for `LogFoodUseCase`. Hardcoding 100 was only correct when all catalog items had `base_serving_g = 100`. The recipe builder creates items with `base_serving_g = N × 100`, breaking the assumption. |
+| 79 | Reset `servingG` on food name edit | When the user edits the food name in the manual form, they're creating a custom item. The catalog link (`sourceCatalogFoodItemId`) is cleared, so `servingG` must also reset to 100 to prevent the old catalog serving weight from affecting the new item's normalization. |
+
+---
+
+## Phase 20: AI Migration — Direct Gemini → Shared Supabase Edge Functions
+
+**Status:** ✅ Completed
+**Date:** June 4, 2026
+
+### Summary
+
+Replaced all direct Gemini API calls in Android with shared Supabase Edge Functions (`parse-food` and `scan-label`) already used by the webapp. This ensures strict cross-platform parity: both platforms now use the same AI backend, same prompts, and same response schemas. The local `ResolveCatalogCacheUseCase` fallback is preserved for offline/unsynced data.
+
+**Motivation:**
+- Eliminate divergent AI prompts between Android (direct Gemini) and webapp (Edge Functions)
+- Centralize prompt engineering — update once in Edge Functions, both platforms benefit
+- Remove client-side Gemini API key exposure from the Android app
+- Edge Functions return pre-resolved `catalogMatch` data, reducing client-side catalog resolution work
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `data/remote/dto/ParseFoodEdgeDto.kt` | **Created** | DTOs for the `parse-food` Edge Function: `ParseFoodRequest`, `ParseFoodEdgeResponse`, `ParsedFoodDto`, `CatalogMatchDto`, `FoodItemDto` |
+| 2 | `data/remote/dto/ScanLabelEdgeDto.kt` | **Created** | DTOs for the `scan-label` Edge Function: `ScanLabelRequest`, `ScanLabelEdgeResponse` with raw + converted per-100g fields |
+| 3 | `data/remote/api/SupabaseEdgeFunctionService.kt` | Updated | Added `parseFoodViaEdge()` and `scanLabelViaEdge()` endpoints |
+| 4 | `domain/model/ParsedFood.kt` | Updated | Added `edgeCatalogMatch: EdgeCatalogMatch? = null` field and new `EdgeCatalogMatch` data class (`isFromCatalog: Boolean`, `foodItem: FoodItem?`) |
+| 5 | `domain/model/ExtractedLabelData.kt` | Updated | Added pre-computed per-100g fields (`calories`, `protein`, `carbs`, `fat`) defaulting to raw values, plus `suggestedQuantity` and `suggestedUnit` |
+| 6 | `data/repository/AiRepositoryImpl.kt` | **Rewritten** | Constructor takes only `SupabaseEdgeFunctionService`. `parseFood()` calls `parseFoodViaEdge()`, `extractLabelFromImage()` calls `scanLabelViaEdge()`. Includes DTO-to-domain mapping extension functions |
+| 7 | `domain/usecase/ResolveCatalogCacheUseCase.kt` | Updated | Added short-circuit for `edgeCatalogMatch` pre-resolved items, extracted `resolveIngredientSingle()` helper, kept Room fallback for unsynced data |
+| 8 | `presentation/screens/log/LabelScannerDelegate.kt` | Updated | Removed per-serving→per-100g conversion math, uses `data.calories`, `data.protein`, `data.carbs`, `data.fat`, `data.suggestedQuantity`, `data.suggestedUnit` directly from pre-computed fields |
+| 9 | `di/AppModule.kt` | Updated | Removed generic `provideOkHttpClient()`, `@Named("gemini")` Retrofit, `provideGeminiApiService()` |
+| 10 | `util/Constants.kt` | Updated | Removed `GEMINI_BASE_URL` |
+| 11 | `app/build.gradle.kts` | Updated | Removed `GEMINI_API_KEY` BuildConfig field |
+| 12 | `data/remote/api/GeminiApiService.kt` | **Deleted** | Direct Gemini API interface — replaced by Edge Functions |
+| 13 | `data/remote/dto/GeminiRequest.kt` | **Deleted** | Gemini request DTOs — no longer needed |
+| 14 | `data/remote/dto/GeminiResponse.kt` | **Deleted** | Gemini response DTOs — no longer needed |
+| 15 | `util/GeminiPrompts.kt` | **Deleted** | Client-side prompts for food parsing — now in Edge Function |
+| 16 | `util/GeminiLabelPrompts.kt` | **Deleted** | Client-side prompts for label scanning — now in Edge Function |
+
+### Key Implementation Details
+
+**AiRepositoryImpl rewrite:**
+```kotlin
+class AiRepositoryImpl @Inject constructor(
+    private val edgeFunctionService: SupabaseEdgeFunctionService
+) : AiRepository {
+    override suspend fun parseFood(description: String): List<ParsedFood> {
+        val response = edgeFunctionService.parseFoodViaEdge(
+            ParseFoodRequest(foodDescription = description)
+        )
+        return response.foods.map { it.toDomain() }
+    }
+}
+```
+
+**Edge catalog match short-circuit in ResolveCatalogCacheUseCase:**
+```kotlin
+// If the Edge Function already resolved a catalog match, use it directly
+if (food.edgeCatalogMatch?.isFromCatalog == true) {
+    food.edgeCatalogMatch.foodItem?.let { return it }
+}
+// Otherwise fall back to local Room cache lookup
+```
+
+**Data flow (before vs after):**
+
+| Step | Before (Direct Gemini) | After (Edge Functions) |
+|------|----------------------|----------------------|
+| 1. AI Parse | Android → Gemini API (client-side prompt) | Android → Supabase EF → Gemini API (server-side prompt) |
+| 2. Catalog Match | Client-side `ResolveCatalogCacheUseCase` only | Edge Function pre-resolves + client fallback for unsynced |
+| 3. Label Scan | Android → Gemini API (client-side prompt + manual per-100g conversion) | Android → Supabase EF → Gemini API (server returns pre-computed per-100g) |
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| 80 | Keep `AiRepository` interface unchanged | `ParseFoodWithAiUseCase` and `ExtractLabelUseCase` still call the same `aiRepository.parseFood()` / `aiRepository.extractLabelFromImage()`. Only the implementation swaps from direct Gemini to Edge Functions. Zero changes to use cases or ViewModels. |
+| 81 | Keep `ResolveCatalogCacheUseCase` as fallback | Edge Functions pre-resolve catalog matches using cloud data, but the user's local Room DB may have items not yet synced. The local fallback ensures catalog hits for offline-created items. |
+| 82 | Pre-compute per-100g values in `scan-label` Edge Function | Eliminates duplicated per-serving→per-100g conversion logic on each client. The Edge Function returns both raw and normalized values; Android uses the pre-computed ones directly. |
+| 83 | Remove `GEMINI_API_KEY` from Android build | The API key is no longer needed client-side — all AI calls go through Supabase Edge Functions which hold the key server-side. Eliminates client-side key exposure risk. |
+
+---
+
 ## Appendix: API Keys & Secrets
 
 > ⚠️ **Never commit API keys to version control.**
@@ -2386,6 +2537,6 @@ util/
 
 | Service | Key Name | Where to Get |
 |---------|----------|--------------|
-| Google Gemini | `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/app/apikey) |
+| ~~Google Gemini~~ | ~~`GEMINI_API_KEY`~~ | ~~Removed in Phase 20 — AI calls go through Edge Functions~~ |
 | Supabase | `SUPABASE_URL` | [Supabase Dashboard](https://supabase.com/dashboard) |
 | Supabase | `SUPABASE_ANON_KEY` | [Supabase Dashboard](https://supabase.com/dashboard) |

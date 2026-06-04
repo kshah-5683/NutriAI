@@ -25,6 +25,9 @@
 - [Phase W10: Serving Size Clarification — Brand-Aware Nutrition Lookup](#phase-w10-serving-size-clarification--brand-aware-nutrition-lookup)
 - [Phase W10.1: Clarification Robustness — Prompt Expansion, Brand Validation & Dark Mode Fix](#phase-w101-clarification-robustness--prompt-expansion-brand-validation--dark-mode-fix)
 - [Phase W11: Edit Log Macro Scaling Guard — Gram ↔ Non-Gram Boundary](#phase-w11-edit-log-macro-scaling-guard--gram--non-gram-boundary)
+- [Phase W12: Catalog Re-Log Macro Fix — Per-100g De-Normalization](#phase-w12-catalog-re-log-macro-fix--per-100g-de-normalization)
+- [Phase W13: AI Parse Fixes — Recipe Nutrition, Serving Size Pre-Scaling & Button Loading State](#phase-w13-ai-parse-fixes--recipe-nutrition-serving-size-pre-scaling--button-loading-state)
+- [Phase W14: Recommendation Cache Type Safety](#phase-w14-recommendation-cache-type-safety)
 - [Architecture Decisions](#architecture-decisions)
 - [Known Issues & Tech Debt](#known-issues--tech-debt)
 
@@ -1135,6 +1138,258 @@ Catalog IDs: `{uuid}_local_user_ingredients`, `{uuid}_local_user_recipes`.
 Every query must include `.is("deleted_at", null)`.
 Soft-delete: set `deleted_at = Date.now()` + `last_modified_at = Date.now()`.
 Never hard-delete — let pg_cron handle it after 15 days.
+
+---
+
+## Phase W12: Catalog Re-Log Macro Fix — Per-100g De-Normalization
+
+**Status:** ✅ Completed
+**Date:** June 4, 2026
+
+### Summary
+
+Fixed incorrect daily log totals when re-logging a catalog item whose `base_serving_g ≠ 100` (e.g., recipes created via the manual recipe builder). The `log-food` Edge Function expects **per-serving** macros, but catalog items store **per-100g** macros. Both webapp save paths were sending per-100g values without de-normalizing, causing the Edge Function to double-normalize.
+
+**Symptom:** A recipe with 365 kcal per 400g serving (stored as `base_calories = 91.25` per-100g, `base_serving_g = 400`) would log as 91 kcal instead of 365 kcal for 1 serving.
+
+**Root cause:** The Edge Function normalizes incoming macros via `normMacro = rawMacro × (100 / servingG)`. When per-100g values are sent with `servingG = 400`, double-normalization occurs: `91.25 × (100/400) = 22.8`, then `22.8 × scaleFactor(4.0) = 91.25` — producing the per-100g value instead of the per-serving total.
+
+**Fix:** De-normalize catalog macros before sending to the Edge Function: `perServing = per100g × (servingG / 100)`. This mirrors the existing correct logic in Android's `acceptAndLogAllParsed()` (lines 818-821).
+
+### Bug Reproduction
+
+1. Create recipe "Mango Smoothie" via manual recipe builder with ingredients totaling 400g and 365 kcal
+2. Recipe stored: `base_serving_g = 400`, `base_calories = 91.25` (per-100g)
+3. Later, log "mango smoothie" via AI → catalog match found
+4. **Before fix:** Daily log shows 91 kcal (per-100g value, not per-serving)
+5. **After fix:** Daily log shows 365 kcal (correct per-serving total)
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `webapp/app/log/page.tsx` | Updated | `handleLogAll()`: Added `deNorm = servingG / 100` multiplier for catalog items. Catalog macros (per-100g) are now de-normalized to per-serving before calling the `log-food` Edge Function. Non-catalog items (`nutrition?.caloriesPer100g` with `servingG = 100`) are unaffected (`deNorm = 1.0`). |
+| 2 | `webapp/components/manual-input-section.tsx` | Updated | `handleSaveFlat()`: Added `servingG` subscription from the Zustand store. Replaced hardcoded `baseServingG: 100` with `numServingG` from the store. Applied `deNorm` multiplier to convert per-100g form macros to per-serving. For pure manual entry, `servingG` defaults to `"100"` → `deNorm = 1.0` → no change. |
+
+### Key Implementation Details
+
+**De-normalization in `handleLogAll()`:**
+```tsx
+const servingG = catalogItem?.baseServingG ?? 100;
+const deNorm = servingG / 100;
+
+await logFood.mutateAsync({
+  baseServingG: servingG,
+  baseCalories: (catalogItem.baseCalories ?? 0) * deNorm,
+  baseProtein:  (catalogItem.baseProtein ?? 0) * deNorm,
+  baseCarbs:    (catalogItem.baseCarbs ?? 0) * deNorm,
+  baseFat:      (catalogItem.baseFat ?? 0) * deNorm,
+  ...
+});
+```
+
+**De-normalization in `handleSaveFlat()`:**
+```tsx
+const numServingG = parseFloat(servingG) || 100;
+const deNorm = numServingG / 100;
+
+logFood.mutate({
+  baseServingG: numServingG,
+  baseCalories: numCal * deNorm,
+  baseProtein:  numProtein * deNorm,
+  baseCarbs:    numCarbs * deNorm,
+  baseFat:      numFat * deNorm,
+  ...
+});
+```
+
+**Affected paths and status:**
+
+| Path | Before | After |
+|------|--------|-------|
+| `handleLogAll()` (Log All button) | ❌ Sent per-100g to EF expecting per-serving | ✅ Fixed — de-normalizes with `deNorm` |
+| `handleSaveFlat()` (Accept → Manual → Log) | ❌ Hardcoded `baseServingG: 100` | ✅ Fixed — uses store's `servingG` + `deNorm` |
+
+**Scope of impact:** Any catalog item where `base_serving_g ≠ 100`, including:
+- All recipes created via the recipe builder (`base_serving_g = N × 100`)
+- Any food edited in the Catalog screen to change its serving size
+
+### Cross-Platform Parity
+
+| Platform | Path | Fix |
+|----------|------|-----|
+| Android | `acceptAndLogAllParsed()` (Log All) | Already correct — had de-normalization at lines 818-821 |
+| Android | `saveLog()` (Accept → Log) | Fixed in Phase 19 — added `servingG` to `LogUiState`, used `deNorm` |
+| Webapp | `handleLogAll()` | Fixed — added `deNorm = servingG / 100` multiplier |
+| Webapp | `handleSaveFlat()` | Fixed — reads `servingG` from Zustand store, applies `deNorm` |
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| W53 | De-normalize catalog macros at the call site, not in the store | The `acceptParsedFood()` Zustand action already sets `servingG` from the catalog item. De-normalizing at the save call site (`handleSaveFlat` / `handleLogAll`) keeps the form fields displaying per-100g values (consistent with the UI labels) while sending per-serving values to the Edge Function. |
+| W54 | Use Zustand store's `servingG` in `handleSaveFlat()` instead of hardcoding 100 | The store's `servingG` defaults to `"100"` for manual entry and is only changed by `acceptParsedFood()` from a catalog item. This makes the fix zero-impact for pure manual entry while correctly handling catalog re-logs. |
+
+---
+
+## Phase W13: AI Parse Fixes — Recipe Nutrition, Serving Size Pre-Scaling & Button Loading State
+
+**Status:** ✅ Completed
+**Date:** June 4, 2026
+
+### Summary
+
+Three related fixes for the AI Parse flow, addressing recipe nutrition lookups returning 0 kcal, recipe serving sizes being double-counted, and the "Parse with AI" button showing no visual feedback (spinner/disabled state) when clicked.
+
+### Bug 1: Recipe Ingredients Logging 0 kcal
+
+**Symptom:** Parsing "Strawberry Milkshake" via AI showed 165 kcal in the parsed card, but logged as 0 kcal in the daily log.
+
+**Root cause:** `lookupAll()` in `use-nutrition-lookup.ts` only fired nutrition lookups for top-level parsed foods, not for recipe ingredients. When a food had `isRecipe: true`, its ingredients were never looked up, so `nutritionResults[ingredientName]` was always `undefined` at log time.
+
+**Fix:** Added recipe ingredient iteration in `lookupAll()` — when `food.isRecipe && food.ingredients`, loop through each ingredient and trigger individual lookups.
+
+### Bug 2: Recipe Serving Size 200g Instead of 150g
+
+**Symptom:** A recipe with 50g blueberry + 100g yogurt yielded `base_serving_g = 200` instead of the correct 150g. Macros were similarly inflated.
+
+**Root cause:** `handleLogAll()` in `app/log/page.tsx` sent raw `base_serving_g: PER_100G_BASE` (100) for each non-catalog ingredient without pre-scaling by the parsed quantity. The `log-recipe` Edge Function performs a direct sum of `base_*` values, so 100+100=200 instead of the correct 50+100=150.
+
+**Fix:** Applied `computeServingMultiplier()` pre-scaling in `handleLogAll()` for both catalog and nutrition-enriched ingredients. This mirrors Android's `acceptAndLogAllParsed()` (lines 767-778) which already pre-scaled correctly.
+
+### Bug 3: Parse AI Button Not Showing Loading State
+
+**Symptom:** Clicking "Parse with AI" showed no spinner or disabled state — the button appeared unchanged while the AI call was in-flight.
+
+**Root cause (multi-layer):**
+1. `setParsedFoods()` in Zustand didn't reset `isParsing: false`, leaving the flag stuck after first successful parse
+2. `setIsParsing(true)` was inside the async `mutationFn`, not in a synchronous React event handler batch — the state update could be deferred past the next render
+3. Even after moving to `onMutate`, Zustand's `useSyncExternalStore` subscription didn't consistently trigger an immediate re-render
+
+**Fix (3-part):**
+1. Added `isParsing: false` to `setParsedFoods()` state update in `log-form-store.ts`
+2. Moved `setIsParsing(true)` and `setAiError(null)` from `mutationFn` to `onMutate` callback in `use-parse-food.ts`
+3. Used TanStack Query's built-in `parseMutation.isPending` directly in `ai-input-section.tsx` — combined with Zustand's `isParsing` as `isParseLoading = parseMutation.isPending || isParsing`. TanStack Query manages `isPending` via React state internally, guaranteeing synchronous re-render on `mutate()`.
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `lib/hooks/use-nutrition-lookup.ts` | Updated | `lookupAll()` now recurses into recipe ingredients: added `isRecipe` and `ingredients` to type signature, inner loop triggers lookup for each ingredient |
+| 2 | `app/log/page.tsx` | Updated | `handleLogAll()`: Pre-scales ingredient macros and `base_serving_g` using `computeServingMultiplier()` for both catalog-matched and nutrition-enriched ingredients before sending to `log-recipe` Edge Function |
+| 3 | `lib/stores/log-form-store.ts` | Updated | `setParsedFoods()` now includes `isParsing: false` in the state update to ensure parsing state resets on success |
+| 4 | `lib/hooks/use-parse-food.ts` | Updated | Moved `setIsParsing(true)` and `setAiError(null)` from inside `mutationFn` to `onMutate` callback for synchronous execution within React event handler batch |
+| 5 | `components/ai-input-section.tsx` | Updated | Button uses `isParseLoading = parseMutation.isPending \|\| isParsing` for both `disabled` and `loading` props. "Enter manually instead" link also uses `isParseLoading`. |
+
+### Key Implementation Details
+
+**Recipe ingredient nutrition lookup:**
+```typescript
+// use-nutrition-lookup.ts — lookupAll()
+for (const food of foods) {
+  if (food.isRecipe && food.ingredients) {
+    for (const ing of food.ingredients) {
+      lookupNutrition(ing.name);
+    }
+  } else {
+    lookupNutrition(food.name);
+  }
+}
+```
+
+**Recipe ingredient pre-scaling in handleLogAll():**
+```typescript
+// Catalog-matched ingredient
+const multiplier = computeServingMultiplier(
+  ing.quantity, ing.unit, catalogMatch.foodItem.baseServingG
+);
+return {
+  isFromCatalog: true,
+  parsedName: ing.name,
+  foodItem: {
+    ...catalogMatch.foodItem,
+    baseServingG: (catalogMatch.foodItem.baseServingG ?? PER_100G_BASE) * multiplier,
+    baseCalories: (catalogMatch.foodItem.baseCalories ?? 0) * multiplier,
+    // ... protein, carbs, fat similarly scaled
+  },
+};
+```
+
+**Button loading state using TanStack Query:**
+```typescript
+const parseMutation = useParseFood();
+const isParseLoading = parseMutation.isPending || isParsing;
+
+<Button
+  onClick={handleParse}
+  disabled={isParseLoading || !aiInput.trim() || aiInput.trim().length < 2}
+  loading={isParseLoading}
+>
+  ✨ Parse with AI
+</Button>
+```
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| W55 | Use `parseMutation.isPending` from TanStack Query for button loading state instead of Zustand `isParsing` | TanStack Query manages `isPending` via React's `useState` internally, guaranteeing synchronous re-render when `mutate()` is called. Zustand's `useSyncExternalStore` subscription doesn't always batch with React's rendering cycle for immediate visual feedback. The Zustand `isParsing` is kept as a fallback via OR (`\|\|`) for other consumers. |
+| W56 | Pre-scale ingredient macros client-side before sending to `log-recipe` Edge Function | The Edge Function performs a direct sum of `base_*` values from ingredient matches. Each ingredient must represent its actual contribution (quantity-adjusted), not raw per-100g values. This mirrors Android's `acceptAndLogAllParsed()` lines 767-778. |
+
+---
+
+## Phase W14: Recommendation Cache Type Safety
+
+**Status:** ✅ Completed
+**Date:** June 4, 2026
+
+### Summary
+
+Fixed webapp build failure caused by the `recommendation_cache` table missing from the generated Supabase types. Added proper type definitions and fixed type casting for JSONB columns.
+
+**Symptom:** `npm run build` failed with: `Property 'recommendations' does not exist on type 'never'` in `use-cached-recommendations.ts`.
+
+**Root cause:** The `recommendation_cache` table (created by migration `011_recommendation_cache.sql`) was not present in the hand-maintained `database.ts` type file. TypeScript inferred the table access as `never`, causing all property accesses to fail.
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `lib/types/database.ts` | Updated | Added full `recommendation_cache` table definition with Row/Insert/Update types matching migration `011_recommendation_cache.sql` |
+| 2 | `lib/hooks/use-cached-recommendations.ts` | Updated | Added `Json` import, changed `cached.recommendations as Recommendation[]` to `as unknown as Recommendation[]`, used `as unknown as Json` for JSONB columns in upsert |
+
+### Key Implementation Details
+
+**Type definition added to `database.ts`:**
+```typescript
+recommendation_cache: {
+  Row: {
+    user_id: string;
+    recommendations: Json;
+    generated_at: string;
+    expires_at: string;
+    model_version: string | null;
+    created_at: string;
+  };
+  Insert: { /* ... */ };
+  Update: { /* ... */ };
+};
+```
+
+**JSONB type casting pattern:**
+```typescript
+// Reading: Json → domain type (double cast needed because Json doesn't overlap)
+const recs = cached.recommendations as unknown as Recommendation[];
+
+// Writing: domain type → Json (same pattern in reverse)
+{ recommendations: recs as unknown as Json }
+```
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| W57 | Use `as unknown as T` double-cast for Supabase JSONB columns | Supabase's `Json` type (`string \| number \| boolean \| null \| { [key: string]: Json } \| Json[]`) doesn't structurally overlap with domain types like `Recommendation[]`. TypeScript correctly rejects a direct `as` cast. The double-cast via `unknown` is the standard pattern for JSONB columns with known runtime shapes. |
 
 ---
 

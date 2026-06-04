@@ -11,6 +11,7 @@ import { ManualInputSection } from "@/components/manual-input-section";
 import { ScanInputSection } from "@/components/scan-input-section";
 import { startOfDayMs } from "@/lib/utils/format";
 import { getIngredientCatalogId } from "@/lib/utils/constants";
+import { computeServingMultiplier, PER_100G_BASE } from "@/lib/utils/macro-calculator";
 import { useSupabase } from "@/components/providers/supabase-provider";
 import { useEffect, useState } from "react";
 
@@ -49,29 +50,46 @@ export default function LogPage() {
     for (const food of parsedFoods) {
       if (food.isRecipe) {
         // Build ingredient matches for the recipe Edge Function
+        // Pre-scale each ingredient's macros by its parsed quantity/unit.
+        // Mirrors Android LogViewModel lines 767-778: the log-recipe Edge Function
+        // does a direct sum of base_* values, so each ingredient must represent
+        // its actual contribution (not raw per-100g).
         const ingredientMatches = food.ingredients.map((ing) => {
           const ingNutrition = nutritionResults[ing.name] ?? null;
           const catalogMatch = ing.catalogMatch;
 
           if (catalogMatch?.isFromCatalog && catalogMatch.foodItem) {
+            const multiplier = computeServingMultiplier(
+              ing.quantity, ing.unit, catalogMatch.foodItem.baseServingG
+            );
             return {
               isFromCatalog: true,
               parsedName: ing.name,
-              foodItem: catalogMatch.foodItem,
+              foodItem: {
+                ...catalogMatch.foodItem,
+                baseServingG: (catalogMatch.foodItem.baseServingG ?? PER_100G_BASE) * multiplier,
+                baseCalories: (catalogMatch.foodItem.baseCalories ?? 0) * multiplier,
+                baseProtein: (catalogMatch.foodItem.baseProtein ?? 0) * multiplier,
+                baseCarbs: (catalogMatch.foodItem.baseCarbs ?? 0) * multiplier,
+                baseFat: (catalogMatch.foodItem.baseFat ?? 0) * multiplier,
+              },
             };
           } else if (ingNutrition) {
-            // Enriched with nutrition data — create a food item shape
+            // Pre-scale nutrition macros by ingredient's parsed quantity/unit
+            const multiplier = computeServingMultiplier(
+              ing.quantity, ing.unit, ingNutrition.servingWeightG ?? undefined
+            );
             return {
               isFromCatalog: false,
               parsedName: ing.name,
               matchedFoodItem: {
                 id: crypto.randomUUID(),
                 name: ing.name,
-                base_serving_g: 100,
-                base_calories: ingNutrition.caloriesPer100g,
-                base_protein: ingNutrition.proteinPer100g,
-                base_carbs: ingNutrition.carbsPer100g,
-                base_fat: ingNutrition.fatPer100g,
+                base_serving_g: PER_100G_BASE * multiplier,
+                base_calories: ingNutrition.caloriesPer100g * multiplier,
+                base_protein: ingNutrition.proteinPer100g * multiplier,
+                base_carbs: ingNutrition.carbsPer100g * multiplier,
+                base_fat: ingNutrition.fatPer100g * multiplier,
                 brand: ingNutrition.brand,
                 external_api_id: ingNutrition.externalId,
               },
