@@ -52,6 +52,8 @@ export const EDGE_FUNCTIONS = {
   SCAN_LABEL: "scan-label",
   UPDATE_FOOD: "update-food",
   UPDATE_DAILY_LOG: "update-daily-log",
+  RECOMMEND_MEALS: "recommend-meals",
+  PREFETCH_RECOMMENDATIONS: "prefetch-recommendations",
 } as const;
 
 // ─── Soft-delete sentinel ─────────────────────────────────────────────────────

@@ -26,7 +26,7 @@ serve(async (req) => {
   try {
     // 1. Parse + validate request body
     const body = await req.json();
-    const { mode, query, timeOfDay, remainingMacros, includeInternet } = body;
+    const { mode, query, timeOfDay, remainingMacros, includeInternet, targetMeal } = body;
 
     if (!["time_based", "query"].includes(mode)) {
       return jsonError("Invalid mode — must be 'time_based' or 'query'", 400);
@@ -154,6 +154,7 @@ serve(async (req) => {
       catalogItems: catalogForPrompt,
       query: mode === "query" ? sanitizedQuery : undefined,
       profile,
+      targetMeal: targetMeal ?? null,
     });
 
     // 7. Call Gemma 4
@@ -173,7 +174,7 @@ serve(async (req) => {
             temperature: 0.7,
             topP: 0.9,
             topK: 40,
-            maxOutputTokens: 1024,
+            maxOutputTokens: 2048,
             responseMimeType: "application/json",
             thinkingConfig: { thinkingLevel: "MINIMAL" },
           },

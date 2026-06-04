@@ -78,6 +78,9 @@ data class DailyLogEntity(
     @ColumnInfo(name = "total_fat")
     val totalFat: Double,
 
+    @ColumnInfo(name = "meal_type")
+    val mealType: String? = null,
+
     @ColumnInfo(name = "is_synced")
     val isSynced: Boolean = false,
 

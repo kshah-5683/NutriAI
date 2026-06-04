@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useSupabase } from "@/components/providers/supabase-provider";
 import { useLogFormStore } from "@/lib/stores/log-form-store";
 import { EDGE_FUNCTIONS } from "@/lib/utils/constants";
+import { triggerPrefetch } from "@/lib/utils/prefetch-trigger";
 import type { LogFoodRequest } from "@/lib/types/ai";
 
 /**
@@ -37,6 +38,7 @@ export function useLogFood() {
             externalApiId: request.externalApiId ?? null,
             existingFoodItemId: request.existingFoodItemId ?? null,
             skipDailyLog: request.skipDailyLog ?? false,
+            mealType: request.mealType ?? null,
           },
         }
       );
@@ -48,6 +50,8 @@ export function useLogFood() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["daily-logs"] });
+      queryClient.invalidateQueries({ queryKey: ["recommendation-cache"] });
+      triggerPrefetch(supabase);
       resetForm();
       router.push("/");
     },

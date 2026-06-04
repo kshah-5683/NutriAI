@@ -2,7 +2,7 @@
 
 import { create } from "zustand";
 import type { ParsedFood, NutritionInfo } from "@/lib/types/ai";
-import type { FoodItem } from "@/lib/types/domain";
+import type { FoodItem, MealType } from "@/lib/types/domain";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -45,6 +45,18 @@ export interface ManualRecipeIngredient {
   fat: string;
 }
 
+/**
+ * Auto-detect the most likely meal type from the current hour.
+ * Used as the default selection when the log form opens.
+ */
+function inferMealType(): MealType {
+  const hour = new Date().getHours();
+  if (hour >= 6 && hour < 11) return "breakfast";
+  if (hour >= 11 && hour < 14) return "lunch";
+  if (hour >= 14 && hour < 17) return "snack";
+  return "dinner";
+}
+
 /** Returns a blank ingredient row with a unique id. */
 function createEmptyIngredient(): ManualRecipeIngredient {
   return {
@@ -63,6 +75,9 @@ function createEmptyIngredient(): ManualRecipeIngredient {
 interface LogFormState {
   // Tab state
   inputMode: InputMode;
+
+  // Meal type — shared across all input modes
+  mealType: MealType;
 
   // AI parse state
   aiInput: string;
@@ -102,6 +117,7 @@ interface LogFormState {
   recipeIngredients: ManualRecipeIngredient[];
 
   // Actions
+  setMealType: (type: MealType) => void;
   setInputMode: (mode: InputMode) => void;
   setAiInput: (text: string) => void;
   setIsParsing: (loading: boolean) => void;
@@ -193,8 +209,11 @@ const initialAiState = {
 
 export const useLogFormStore = create<LogFormState>((set, get) => ({
   inputMode: "ai",
+  mealType: inferMealType(),
   ...initialAiState,
   ...initialManualState,
+
+  setMealType: (type) => set({ mealType: type }),
 
   setInputMode: (mode) => set({ inputMode: mode }),
 
@@ -238,6 +257,7 @@ export const useLogFormStore = create<LogFormState>((set, get) => ({
     if (!food) return;
 
     const nutrition = state.nutritionResults[food.name] ?? null;
+    const catalogItem = food.catalogMatch?.isFromCatalog ? food.catalogMatch.foodItem : null;
 
     // Check for weight override from clarification resolution
     const clarification = state.clarificationResolutions[index];
@@ -253,17 +273,26 @@ export const useLogFormStore = create<LogFormState>((set, get) => ({
     // Pre-scale factor: converts per-100g → per-unit (e.g. 50g egg → 0.5)
     const scale = shouldPreScale ? swg / 100 : 1;
 
+    // Resolve macros: prefer nutrition lookup, fall back to catalog item's base macros.
+    // Catalog items skip the nutrition lookup (already in user's DB), so their macros
+    // must come from catalogItem.base* fields. Both sources are per 100g.
+    const cal = nutrition ? nutrition.caloriesPer100g : (catalogItem?.baseCalories ?? 0);
+    const pro = nutrition ? nutrition.proteinPer100g : (catalogItem?.baseProtein ?? 0);
+    const crb = nutrition ? nutrition.carbsPer100g : (catalogItem?.baseCarbs ?? 0);
+    const ft = nutrition ? nutrition.fatPer100g : (catalogItem?.baseFat ?? 0);
+    const hasMacros = nutrition != null || catalogItem != null;
+
     set({
       inputMode: "manual",
       foodName: food.name,
-      brand: "",
+      brand: catalogItem?.brand ?? "",
       quantity: String(food.quantity),
       unit: food.unit,
-      servingG: shouldPreScale ? String(Math.round(swg)) : "100",
-      calories: nutrition ? String(Math.round(nutrition.caloriesPer100g * scale * 10) / 10) : "",
-      protein: nutrition ? String(Math.round(nutrition.proteinPer100g * scale * 10) / 10) : "",
-      carbs: nutrition ? String(Math.round(nutrition.carbsPer100g * scale * 10) / 10) : "",
-      fat: nutrition ? String(Math.round(nutrition.fatPer100g * scale * 10) / 10) : "",
+      servingG: shouldPreScale ? String(Math.round(swg)) : (catalogItem ? String(catalogItem.baseServingG) : "100"),
+      calories: hasMacros ? String(Math.round(cal * scale * 10) / 10) : "",
+      protein: hasMacros ? String(Math.round(pro * scale * 10) / 10) : "",
+      carbs: hasMacros ? String(Math.round(crb * scale * 10) / 10) : "",
+      fat: hasMacros ? String(Math.round(ft * scale * 10) / 10) : "",
     });
   },
 
@@ -384,6 +413,7 @@ export const useLogFormStore = create<LogFormState>((set, get) => ({
   resetForm: () =>
     set({
       inputMode: "ai",
+      mealType: inferMealType(),
       ...initialAiState,
       ...initialManualState,
       // Ensure recipe ingredient list is re-initialised with a fresh empty row

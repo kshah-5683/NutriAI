@@ -13,7 +13,8 @@ package com.app.nutriai.util
  * | cup(s)            | ~240g per cup         | (quantity * 240) / 100                    |
  * | piece/slice/bowl  | servingWeightG if set | quantity * servingWeightG / 100           |
  * |                   | 100g fallback         | quantity × 1.0                            |
- * | serving           | 100g assumed          | quantity × 1.0                            |
+ * | serving (default) | servingWeightG if set | quantity * servingWeightG / 100           |
+ * |                   | 100g fallback         | quantity × 1.0                            |
  */
 object UnitConverter {
 
@@ -22,10 +23,10 @@ object UnitConverter {
     /**
      * @param quantity User-entered quantity value.
      * @param unit Unit string (case-insensitive).
-     * @param servingWeightG Optional gram-weight of one discrete unit (piece/slice/bowl).
-     *   When provided for discrete units, the multiplier is `quantity * servingWeightG / 100`
-     *   instead of the default `quantity × 1.0` (which assumes 100g per unit).
-     *   Sourced from [com.app.nutriai.domain.model.NutritionInfo.servingWeightG].
+     * @param servingWeightG Optional gram-weight of one serving/discrete unit.
+     *   When provided for "serving", discrete units (piece/slice/bowl), or unknown units,
+     *   the multiplier is `quantity * servingWeightG / 100` instead of `quantity × 1.0`.
+     *   Sourced from [com.app.nutriai.domain.model.FoodItem.baseServingG].
      */
     fun computeServingMultiplier(
         quantity: Double,
@@ -45,8 +46,12 @@ object UnitConverter {
                     (quantity * servingWeightG) / BASE
                 else
                     quantity
-            u == "serving" -> quantity
-            else -> quantity // Unknown unit: treat as serving-based
+            // "serving" and unknown units — use actual serving weight when available
+            else ->
+                if (servingWeightG != null && servingWeightG > 0)
+                    (quantity * servingWeightG) / BASE
+                else
+                    quantity
         }
     }
 

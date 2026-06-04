@@ -36,6 +36,8 @@ import com.app.nutriai.data.local.entity.UserPreferencesEntity
  *   v6 — Phase 11: Added LabelPhotoEntity (local-only label photo metadata, 10-day TTL)
  *   v7 — Phase 14: Added UserPreferencesEntity (macro goals cross-platform sync)
  *   v8 — Phase R4: Added profile columns to UserPreferencesEntity (AI Recommendations)
+ *   v9 — Phase M3: Added meal_type column to DailyLogEntity (Meal Categories)
+ *   v10 — Phase 18: Normalize food_items base macros to per-100g (macro calculation fix)
  */
 @Database(
     entities = [
@@ -47,7 +49,7 @@ import com.app.nutriai.data.local.entity.UserPreferencesEntity
         LabelPhotoEntity::class,
         UserPreferencesEntity::class
     ],
-    version = 8,
+    version = 10,
     exportSchema = true
 )
 abstract class NutriAiDatabase : RoomDatabase() {

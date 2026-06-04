@@ -6,6 +6,7 @@ import { useDateStore } from "@/lib/stores/date-store";
 import { useLogFood } from "@/lib/hooks/use-log-food";
 import { useLogRecipe } from "@/lib/hooks/use-log-recipe";
 import { MacroPreviewCard } from "@/components/macro-preview-card";
+import { MealTypeSelector } from "@/components/meal-type-selector";
 import { ManualRecipeIngredientRow } from "@/components/manual-recipe-ingredient-row";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,6 +42,7 @@ export function ManualInputSection() {
   // ─── Flat ingredient mode fields ───────────────────────────────────────────
   const foodName = useLogFormStore((s) => s.foodName);
   const brand = useLogFormStore((s) => s.brand);
+  const servingG = useLogFormStore((s) => s.servingG);
   const quantity = useLogFormStore((s) => s.quantity);
   const unit = useLogFormStore((s) => s.unit);
   const calories = useLogFormStore((s) => s.calories);
@@ -48,6 +50,9 @@ export function ManualInputSection() {
   const carbs = useLogFormStore((s) => s.carbs);
   const fat = useLogFormStore((s) => s.fat);
   const setField = useLogFormStore((s) => s.setManualField);
+
+  // ─── Meal type (shared across modes) ─────────────────────────────────────────
+  const mealType = useLogFormStore((s) => s.mealType);
 
   // ─── Recipe mode fields ─────────────────────────────────────────────────────
   const isRecipeMode = useLogFormStore((s) => s.isRecipeMode);
@@ -95,17 +100,23 @@ export function ManualInputSection() {
 
   const handleSaveFlat = () => {
     if (!isFlatValid) return;
+    // servingG is set by acceptParsedFood from catalog item; defaults to "100"
+    // for manual entry. Form macros are per-100g; the log-food Edge Function
+    // expects per-serving. De-normalize: perServing = per100g × (servingG / 100).
+    const numServingG = parseFloat(servingG) || 100;
+    const deNorm = numServingG / 100;
     logFood.mutate({
       foodName: foodName.trim(),
       brand: brand.trim() || undefined,
-      baseServingG: 100,
-      baseCalories: numCal,
-      baseProtein: numProtein,
-      baseCarbs: numCarbs,
-      baseFat: numFat,
+      baseServingG: numServingG,
+      baseCalories: numCal * deNorm,
+      baseProtein: numProtein * deNorm,
+      baseCarbs: numCarbs * deNorm,
+      baseFat: numFat * deNorm,
       consumedQty: numQty,
       consumedUnit: unit,
       dateTimestamp: startOfDayMs(selectedDate),
+      mealType,
     });
   };
 
@@ -196,6 +207,7 @@ export function ManualInputSection() {
       quantity: recipeQty,
       unit: recipeUnit,
       dateTimestamp,
+      mealType,
     };
 
     logRecipe.mutate(request);
@@ -206,6 +218,9 @@ export function ManualInputSection() {
 
   return (
     <div className="space-y-4">
+      {/* ── Meal type selector ── */}
+      <MealTypeSelector />
+
       {/* ── Recipe / Ingredient toggle ── */}
       <div
         className="flex rounded-lg p-1"

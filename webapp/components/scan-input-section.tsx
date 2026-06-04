@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { MACRO_COLORS } from "@/lib/utils/constants";
 import { formatMacro } from "@/lib/utils/format";
 import { useScanLabel, type ScanLabelResult } from "@/lib/hooks/use-scan-label";
+import { MealTypeSelector } from "@/components/meal-type-selector";
 import { useLogFormStore } from "@/lib/stores/log-form-store";
 
 /**
@@ -134,6 +135,9 @@ export function ScanInputSection() {
                   {result.serving_weight_g ? ` (${result.serving_weight_g}g)` : ""}
                 </p>
               )}
+
+              {/* Meal type — set before accepting values into manual tab */}
+              <MealTypeSelector />
 
               <Button onClick={handleUseValues} className="w-full">
                 Use These Values

@@ -3,6 +3,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSupabase } from "@/components/providers/supabase-provider";
 import { nowMs } from "@/lib/utils/constants";
+import { triggerPrefetch } from "@/lib/utils/prefetch-trigger";
 
 /**
  * TanStack Query mutation — soft-deletes a daily log.
@@ -34,8 +35,9 @@ export function useDeleteLog() {
       if (error) throw error;
     },
     onSuccess: () => {
-      // Invalidate all daily-logs queries to refresh the list
       queryClient.invalidateQueries({ queryKey: ["daily-logs"] });
+      queryClient.invalidateQueries({ queryKey: ["recommendation-cache"] });
+      triggerPrefetch(supabase);
     },
   });
 }

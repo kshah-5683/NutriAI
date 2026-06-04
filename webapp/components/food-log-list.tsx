@@ -1,8 +1,17 @@
 "use client";
 
+import { useMemo } from "react";
 import { FoodLogItem } from "@/components/food-log-item";
 import { Card } from "@/components/ui/card";
-import type { DailyLog } from "@/lib/types/domain";
+import type { DailyLog, MealType } from "@/lib/types/domain";
+
+/** Display order and emoji for each meal type section header. */
+const MEAL_SECTIONS: { type: MealType; label: string; emoji: string }[] = [
+  { type: "breakfast", label: "Breakfast", emoji: "🌅" },
+  { type: "lunch", label: "Lunch", emoji: "☀️" },
+  { type: "snack", label: "Snack", emoji: "🍎" },
+  { type: "dinner", label: "Dinner", emoji: "🌙" },
+];
 
 interface FoodLogListProps {
   logs: DailyLog[];
@@ -12,10 +21,24 @@ interface FoodLogListProps {
 }
 
 /**
- * Renders the list of food log entries for the selected day.
- * Shows loading skeleton, empty state, or the actual list.
+ * Renders the list of food log entries for the selected day,
+ * grouped by meal type with section headers.
+ * Shows loading skeleton, empty state, or the grouped list.
  */
 export function FoodLogList({ logs, isLoading, onEdit, onDelete }: FoodLogListProps) {
+  /** Group logs by mealType, preserving MEAL_SECTIONS order. */
+  const groupedSections = useMemo(() => {
+    const byType = new Map<string, DailyLog[]>();
+    for (const log of logs) {
+      const key = log.mealType ?? "snack";
+      const arr = byType.get(key) ?? [];
+      arr.push(log);
+      byType.set(key, arr);
+    }
+    return MEAL_SECTIONS
+      .filter((s) => byType.has(s.type))
+      .map((s) => ({ ...s, items: byType.get(s.type)! }));
+  }, [logs]);
   if (isLoading) {
     return (
       <Card noPadding className="mx-4 overflow-hidden">
@@ -55,15 +78,41 @@ export function FoodLogList({ logs, isLoading, onEdit, onDelete }: FoodLogListPr
   }
 
   return (
-    <Card noPadding className="mx-4 overflow-hidden">
-      {logs.map((log) => (
-        <FoodLogItem
-          key={log.id}
-          log={log}
-          onEdit={onEdit}
-          onDelete={onDelete}
-        />
+    <div className="mx-4 flex flex-col gap-3">
+      {groupedSections.map((section) => (
+        <Card key={section.type} noPadding className="overflow-hidden">
+          {/* Section header */}
+          <div
+            className="flex items-center gap-2 px-4 py-2"
+            style={{
+              backgroundColor: "var(--bg-surface-variant)",
+              borderBottom: "1px solid var(--border-variant)",
+            }}
+          >
+            <span className="text-sm">{section.emoji}</span>
+            <span
+              className="text-xs font-semibold uppercase tracking-wide"
+              style={{ color: "var(--text-secondary)" }}
+            >
+              {section.label}
+            </span>
+            <span
+              className="ml-auto text-xs tabular-nums"
+              style={{ color: "var(--text-secondary)" }}
+            >
+              {section.items.reduce((sum, l) => sum + l.totalCalories, 0).toFixed(0)} kcal
+            </span>
+          </div>
+          {section.items.map((log) => (
+            <FoodLogItem
+              key={log.id}
+              log={log}
+              onEdit={onEdit}
+              onDelete={onDelete}
+            />
+          ))}
+        </Card>
       ))}
-    </Card>
+    </div>
   );
 }

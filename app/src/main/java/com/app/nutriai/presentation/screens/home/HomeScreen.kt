@@ -1,5 +1,6 @@
 package com.app.nutriai.presentation.screens.home
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -61,11 +62,14 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.app.nutriai.domain.model.DailyLog
+import com.app.nutriai.domain.model.Recommendation
 import com.app.nutriai.presentation.components.ConfirmDeleteDialog
 import com.app.nutriai.presentation.screens.log.LogUiState
 import com.app.nutriai.presentation.components.FoodLogItem
+import com.app.nutriai.domain.model.MealType
 import com.app.nutriai.presentation.components.MacroSummaryCard
 import com.app.nutriai.presentation.components.OfflineBanner
+import com.app.nutriai.presentation.components.RecommendationCard
 import com.app.nutriai.presentation.theme.NutriAiTheme
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -88,6 +92,13 @@ fun HomeScreen(
     val isOnline by viewModel.isOnline.collectAsState()
     val macroGoals by viewModel.macroGoals.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
+    // Recommendation state (separate StateFlows — lifecycle independent of daily logs)
+    val recommendations by viewModel.recommendations.collectAsState()
+    val recsLoading by viewModel.recsLoading.collectAsState()
+    val recsError by viewModel.recsError.collectAsState()
+    val nextMeal by viewModel.nextMeal.collectAsState()
+    val missedMeals by viewModel.missedMeals.collectAsState()
+    val addedToFoods by viewModel.addedToFoods.collectAsState()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -106,6 +117,12 @@ fun HomeScreen(
         proteinGoal = macroGoals.proteinGoal,
         carbsGoal = macroGoals.carbsGoal,
         fatGoal = macroGoals.fatGoal,
+        recommendations = recommendations,
+        recsLoading = recsLoading,
+        recsError = recsError,
+        nextMeal = nextMeal,
+        missedMeals = missedMeals,
+        addedToFoods = addedToFoods,
         snackbarHostState = snackbarHostState,
         onNavigateToLog = onNavigateToLog,
         onPullToRefresh = viewModel::onPullToRefresh,
@@ -113,7 +130,8 @@ fun HomeScreen(
         onNextDay = viewModel::goToNextDay,
         onGoToToday = viewModel::goToToday,
         onDeleteLog = viewModel::requestDeleteLog,
-        onEditLog = viewModel::startEditLog
+        onEditLog = viewModel::startEditLog,
+        onAddRecommendationToCatalog = viewModel::addRecommendationToCatalog
     )
 
     // Delete confirmation dialog
@@ -142,6 +160,7 @@ fun HomeScreen(
                 onProteinChange = viewModel::updateEditProtein,
                 onCarbsChange = viewModel::updateEditCarbs,
                 onFatChange = viewModel::updateEditFat,
+                onMealTypeChange = viewModel::updateEditMealType,
                 onSave = viewModel::saveEditedLog,
                 onCancel = viewModel::cancelEdit
             )
@@ -159,6 +178,12 @@ private fun HomeScreenContent(
     proteinGoal: Double = 150.0,
     carbsGoal: Double = 250.0,
     fatGoal: Double = 65.0,
+    recommendations: List<Recommendation> = emptyList(),
+    recsLoading: Boolean = false,
+    recsError: String? = null,
+    nextMeal: MealType? = null,
+    missedMeals: List<MealType> = emptyList(),
+    addedToFoods: Set<String> = emptySet(),
     snackbarHostState: SnackbarHostState,
     onNavigateToLog: () -> Unit,
     onPullToRefresh: () -> Unit = {},
@@ -166,7 +191,8 @@ private fun HomeScreenContent(
     onNextDay: () -> Unit,
     onGoToToday: () -> Unit,
     onDeleteLog: (String) -> Unit,
-    onEditLog: (String) -> Unit = {}
+    onEditLog: (String) -> Unit = {},
+    onAddRecommendationToCatalog: (Recommendation) -> Unit = {}
 ) {
     // Pull-to-refresh via raw pointer tracking (PointerEventPass.Initial).
     // NestedScrollConnection was abandoned because LazyColumn's built-in overscroll effect
@@ -300,6 +326,22 @@ private fun HomeScreenContent(
                     )
                 }
 
+                // Recommendation card (only for today)
+                if (uiState.selectedDate == LocalDate.now()) {
+                    item(key = "recommendation_card") {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        RecommendationCard(
+                            recommendations = recommendations,
+                            isLoading = recsLoading,
+                            error = recsError,
+                            nextMeal = nextMeal,
+                            missedMeals = missedMeals,
+                            addedToFoods = addedToFoods,
+                            onAddToMyFoods = onAddRecommendationToCatalog
+                        )
+                    }
+                }
+
                 // Section header
                 item {
                     Row(
@@ -323,22 +365,106 @@ private fun HomeScreenContent(
                     }
                 }
 
-                // Food logs or empty state
+                // Food logs — grouped by meal type (Breakfast → Lunch → Snack → Dinner)
                 if (uiState.dailyLogs.isEmpty()) {
                     item {
                         EmptyLogState()
                     }
                 } else {
-                    items(
-                        items = uiState.dailyLogs,
-                        key = { it.id }
-                    ) { log ->
-                        FoodLogItem(
-                            log = log,
-                            foodName = log.foodName.ifBlank { "Unknown Food" },
-                            onEdit = { logId -> onEditLog(logId) },
-                            onDelete = onDeleteLog
-                        )
+                    val groupedLogs = uiState.dailyLogs.groupBy { MealType.fromString(it.mealType) }
+                    val sectionOrder = listOf(
+                        MealType.BREAKFAST,
+                        MealType.LUNCH,
+                        MealType.SNACK,
+                        MealType.DINNER
+                    )
+
+                    for (type in sectionOrder) {
+                        val logsInSection = groupedLogs[type] ?: continue
+                        val sectionKcal = logsInSection.sumOf { it.totalCalories }.toInt()
+
+                        // Meal type section header
+                        item(key = "header_${type.value}") {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = type.emoji,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    Text(
+                                        text = type.label.uppercase(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Text(
+                                    text = "$sectionKcal kcal",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        items(
+                            items = logsInSection,
+                            key = { it.id }
+                        ) { log ->
+                            FoodLogItem(
+                                log = log,
+                                foodName = log.foodName.ifBlank { "Unknown Food" },
+                                onEdit = { logId -> onEditLog(logId) },
+                                onDelete = onDeleteLog
+                            )
+                        }
+                    }
+
+                    // Uncategorized logs (legacy entries with null mealType)
+                    val uncategorized = groupedLogs[null]
+                    if (uncategorized != null) {
+                        item(key = "header_other") {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "OTHER",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "${uncategorized.sumOf { it.totalCalories }.toInt()} kcal",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        items(
+                            items = uncategorized,
+                            key = { it.id }
+                        ) { log ->
+                            FoodLogItem(
+                                log = log,
+                                foodName = log.foodName.ifBlank { "Unknown Food" },
+                                onEdit = { logId -> onEditLog(logId) },
+                                onDelete = onDeleteLog
+                            )
+                        }
                     }
                 }
 
@@ -557,6 +683,7 @@ private fun EditLogSheetContent(
     onProteinChange: (String) -> Unit,
     onCarbsChange: (String) -> Unit,
     onFatChange: (String) -> Unit,
+    onMealTypeChange: (MealType) -> Unit,
     onSave: () -> Unit,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier
@@ -581,7 +708,14 @@ private fun EditLogSheetContent(
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Meal type selector
+        com.app.nutriai.presentation.components.MealTypeSelector(
+            selected = sheet.mealType,
+            onSelect = onMealTypeChange
+        )
+        Spacer(modifier = Modifier.height(16.dp))
 
         // Quantity + Unit row
         Row(

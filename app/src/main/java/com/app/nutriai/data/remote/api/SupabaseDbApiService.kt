@@ -6,6 +6,8 @@ import com.app.nutriai.data.remote.dto.RemoteFoodItemDto
 import com.app.nutriai.data.remote.dto.RemoteUserDto
 import com.app.nutriai.data.remote.dto.RemoteUserPreferencesDto
 import com.app.nutriai.data.remote.dto.RemoteUserPreferencesPushDto
+import com.app.nutriai.data.remote.dto.RecommendationCacheDto
+import com.app.nutriai.data.remote.dto.RecommendationCacheUpsertDto
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
@@ -159,5 +161,43 @@ interface SupabaseDbApiService {
         @Header("Prefer") prefer: String = "resolution=merge-duplicates",
         @Query("on_conflict") onConflict: String = "user_id",
         @Body body: List<RemoteUserPreferencesPushDto>
+    ): Response<Void?>
+
+    // ─────────────────────────────────────────────
+    //  Recommendation Cache (Phase R2.1)
+    // ─────────────────────────────────────────────
+
+    /**
+     * Read cached AI recommendations from the `recommendation_cache` table.
+     *
+     * Returns a list with 0 or 1 rows — filtered by RLS (user_id) + meal_type + date_timestamp.
+     * Only the `recommendations` JSONB column is selected (all we need for display).
+     *
+     * @param mealTypeFilter  PostgREST equality filter — "eq.{mealType}".
+     * @param dateFilter      PostgREST equality filter — "eq.{startOfDayMs}".
+     * @param select          Column selection — defaults to "recommendations".
+     */
+    @GET("rest/v1/recommendation_cache")
+    suspend fun getRecommendationCache(
+        @Query("meal_type") mealTypeFilter: String,
+        @Query("date_timestamp") dateFilter: String,
+        @Query("select") select: String = "recommendations"
+    ): Response<List<RecommendationCacheDto>>
+
+    /**
+     * Write-back: upsert AI recommendations into `recommendation_cache` after a
+     * successful live Edge Function call. Ensures subsequent Home screen loads
+     * are instant cache hits instead of triggering another AI call.
+     *
+     * Uses the same upsert pattern as other PostgREST writes:
+     * `Prefer: resolution=merge-duplicates` + `on_conflict` on the UNIQUE constraint.
+     *
+     * Phase R2.1: Cache write-back after live fallback.
+     */
+    @POST("rest/v1/recommendation_cache")
+    suspend fun upsertRecommendationCache(
+        @Header("Prefer") prefer: String = "resolution=merge-duplicates,return=minimal",
+        @Query("on_conflict") onConflict: String = "user_id,meal_type,date_timestamp",
+        @Body body: List<RecommendationCacheUpsertDto>
     ): Response<Void?>
 }

@@ -51,11 +51,12 @@ export function CatalogFoodCard({ food, isRecipe, onEdit, onDelete }: CatalogFoo
             {food.brand}
           </p>
         )}
+        {/* Denormalize per-100g base macros to per-serving for display */}
         <div className="mt-1 flex flex-wrap gap-1.5">
-          <MacroBadge value={food.baseCalories} label=" kcal" color={MACRO_COLORS.calories} />
-          <MacroBadge value={food.baseProtein} label="g P" color={MACRO_COLORS.protein} />
-          <MacroBadge value={food.baseCarbs} label="g C" color={MACRO_COLORS.carbs} />
-          <MacroBadge value={food.baseFat} label="g F" color={MACRO_COLORS.fat} />
+          <MacroBadge value={food.baseCalories * food.baseServingG / 100} label=" kcal" color={MACRO_COLORS.calories} />
+          <MacroBadge value={food.baseProtein * food.baseServingG / 100} label="g P" color={MACRO_COLORS.protein} />
+          <MacroBadge value={food.baseCarbs * food.baseServingG / 100} label="g C" color={MACRO_COLORS.carbs} />
+          <MacroBadge value={food.baseFat * food.baseServingG / 100} label="g F" color={MACRO_COLORS.fat} />
         </div>
         <p
           className="mt-0.5 text-xs"

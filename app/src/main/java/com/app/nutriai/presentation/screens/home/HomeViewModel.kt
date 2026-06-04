@@ -4,15 +4,23 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.app.nutriai.data.local.preferences.UserPreferences
 import com.app.nutriai.domain.model.DailyLog
+import com.app.nutriai.domain.model.FoodItem
 import com.app.nutriai.domain.model.MacroGoals
+import com.app.nutriai.domain.model.MealType
+import com.app.nutriai.domain.model.Recommendation
+import com.app.nutriai.domain.repository.FoodRepository
 import com.app.nutriai.domain.usecase.DeleteLogUseCase
 import com.app.nutriai.domain.usecase.GetDailyLogsUseCase
+import com.app.nutriai.domain.usecase.GetTimeBasedRecsUseCase
 import com.app.nutriai.domain.usecase.InitializeUserUseCase
 import com.app.nutriai.domain.usecase.UpdateDailyLogUseCase
 import com.app.nutriai.data.sync.SyncThrottleManager
 import com.app.nutriai.util.ConnectivityObserver
+import com.app.nutriai.util.Constants
+import com.app.nutriai.util.Resource
 import com.app.nutriai.util.UnitConverter
 import com.app.nutriai.util.formatMacro
+import java.util.UUID
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.BufferOverflow
@@ -24,10 +32,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
 import javax.inject.Inject
 
@@ -62,6 +72,8 @@ class HomeViewModel @Inject constructor(
     private val updateDailyLogUseCase: UpdateDailyLogUseCase,
     private val userPreferences: UserPreferences,
     private val syncThrottleManager: SyncThrottleManager,
+    private val getTimeBasedRecsUseCase: GetTimeBasedRecsUseCase,
+    private val foodRepository: FoodRepository,
     connectivityObserver: ConnectivityObserver
 ) : ViewModel() {
 
@@ -80,6 +92,33 @@ class HomeViewModel @Inject constructor(
             started = SharingStarted.WhileSubscribed(5_000),
             initialValue = MacroGoals()
         )
+
+    // ── Recommendations ───────────────────────────────────────────────────
+
+    /** Recommendation state — lifecycle independent of daily logs flow. */
+    private val _recommendations = MutableStateFlow<List<Recommendation>>(emptyList())
+    val recommendations: StateFlow<List<Recommendation>> = _recommendations.asStateFlow()
+
+    private val _recsLoading = MutableStateFlow(false)
+    val recsLoading: StateFlow<Boolean> = _recsLoading.asStateFlow()
+
+    private val _recsError = MutableStateFlow<String?>(null)
+    val recsError: StateFlow<String?> = _recsError.asStateFlow()
+
+    /** The next meal slot being recommended for (e.g., BREAKFAST, DINNER). */
+    private val _nextMeal = MutableStateFlow<MealType?>(null)
+    val nextMeal: StateFlow<MealType?> = _nextMeal.asStateFlow()
+
+    /** Standard meals the user has missed today (excludes snack). */
+    private val _missedMeals = MutableStateFlow<List<MealType>>(emptyList())
+    val missedMeals: StateFlow<List<MealType>> = _missedMeals.asStateFlow()
+
+    /** Track "Add to My Foods" state per recommendation name (internet recs have no ID). */
+    private val _addedToFoods = MutableStateFlow<Set<String>>(emptySet())
+    val addedToFoods: StateFlow<Set<String>> = _addedToFoods.asStateFlow()
+
+    /** Prevents re-fetching recs on recomposition — only refetch on pull-to-refresh or new session. */
+    private var recsFetchedForDate: LocalDate? = null
 
     // ── Pull-to-refresh ───────────────────────────────────────────────────
 
@@ -107,6 +146,10 @@ class HomeViewModel @Inject constructor(
             val result = syncThrottleManager.triggerSync()
             _isRefreshing.value = false
             _refreshMessage.tryEmit(result.message)
+
+            // Also refresh recommendations
+            recsFetchedForDate = null  // force re-fetch
+            fetchRecommendations()
         }
     }
 
@@ -155,6 +198,12 @@ class HomeViewModel @Inject constructor(
                 // Non-critical — user may already exist
             }
         }
+
+        // Fetch recommendations once daily logs are loaded for today
+        viewModelScope.launch {
+            uiState.first { !it.isLoading && it.selectedDate == LocalDate.now() }
+            fetchRecommendations()
+        }
     }
 
     /**
@@ -198,6 +247,7 @@ class HomeViewModel @Inject constructor(
 
     /**
      * The user confirmed deletion — perform the soft-delete and hide the dialog.
+     * After success, triggers prefetch to refresh the recommendation cache.
      */
     fun confirmDeleteLog() {
         val logId = _pendingDeleteLogId.value ?: return
@@ -205,6 +255,9 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 deleteLogUseCase(logId)
+                // Invalidate rec cache + trigger background prefetch
+                recsFetchedForDate = null
+                triggerPrefetchInBackground()
             } catch (e: Exception) {
                 _refreshMessage.tryEmit("Failed to delete entry. Please try again.")
             }
@@ -244,16 +297,20 @@ class HomeViewModel @Inject constructor(
             baseCalories = log.totalCalories / storedQty,
             baseProtein = log.totalProtein / storedQty,
             baseCarbs = log.totalCarbs / storedQty,
-            baseFat = log.totalFat / storedQty
+            baseFat = log.totalFat / storedQty,
+            mealType = MealType.fromString(log.mealType) ?: MealType.inferFromCurrentTime()
         )
     }
 
     /**
      * Updates the quantity field and auto-recalculates total macros.
      *
-     * Recalculation uses the per-serving base macros captured at pre-fill time:
+     * Recalculation uses the per-100g base macros captured at pre-fill time:
      * `newTotal = base × newStoredQty` where `newStoredQty` accounts for
      * gram→multiplier conversion via [UnitConverter.fromDisplayQty].
+     *
+     * After per-100g normalization, base macros are always per-100g regardless
+     * of the original unit system, so cross-unit-type scaling works correctly.
      */
     fun updateEditQty(value: String) {
         val sheet = _editSheet.value ?: return
@@ -279,6 +336,9 @@ class HomeViewModel @Inject constructor(
      * Updates the unit field and recalculates total macros for the current qty.
      * Changing units affects the stored multiplier (e.g. "200" in "g" → storedQty 2.0,
      * but "200" in "serving" → storedQty 200.0), so totals must be recomputed.
+     *
+     * After per-100g normalization, base macros are always per-100g, so
+     * unit-type changes scale correctly without guards.
      */
     fun updateEditUnit(value: String) {
         val sheet = _editSheet.value ?: return
@@ -312,6 +372,10 @@ class HomeViewModel @Inject constructor(
 
     fun updateEditFat(value: String) {
         _editSheet.value = _editSheet.value?.copy(fat = value)
+    }
+
+    fun updateEditMealType(type: MealType) {
+        _editSheet.value = _editSheet.value?.copy(mealType = type)
     }
 
     fun cancelEdit() {
@@ -348,16 +412,128 @@ class HomeViewModel @Inject constructor(
                     totalProtein = protein,
                     totalCarbs = carbs,
                     totalFat = fat,
+                    mealType = sheet.mealType.value,
                     isSynced = false,
                     lastModifiedAt = System.currentTimeMillis()
                 )
                 updateDailyLogUseCase(updatedLog)
                 _editSheet.value = null  // close sheet on success
+                // Invalidate rec cache + trigger background prefetch
+                recsFetchedForDate = null
+                triggerPrefetchInBackground()
             } catch (e: Exception) {
                 _editSheet.value = _editSheet.value?.copy(
                     isSaving = false,
                     errorMessage = "Failed to save changes. Please try again."
                 )
+            }
+        }
+    }
+
+    // ── Recommendations ────────────────────────────────────────────────
+
+    /**
+     * Fetch time-based recommendations for today.
+     *
+     * Only fetches if:
+     * - The selected date is today.
+     * - We haven't already fetched for today in this session (unless pull-to-refresh).
+     *
+     * Updates [_nextMeal] and [_missedMeals] for the UI to display meal-aware headers.
+     */
+    private fun fetchRecommendations() {
+        val state = uiState.value
+        val date = _selectedDate.value
+
+        // Only show recs for today
+        if (date != LocalDate.now()) return
+        // Skip if already fetched for this date (unless force-cleared by pull-to-refresh)
+        if (recsFetchedForDate == date) return
+
+        // Update next meal + missed meals from current logs
+        val loggedMeals = state.dailyLogs.mapNotNull { MealType.fromString(it.mealType) }
+        val hour = LocalTime.now().hour
+        _nextMeal.value = getTimeBasedRecsUseCase.determineNextMealSlot(loggedMeals, hour)
+        _missedMeals.value = getTimeBasedRecsUseCase.deriveMissedMeals(loggedMeals, hour)
+
+        // No recs to fetch if no next meal (late night)
+        if (_nextMeal.value == null) {
+            _recommendations.value = emptyList()
+            recsFetchedForDate = date
+            return
+        }
+
+        viewModelScope.launch {
+            _recsLoading.value = true
+            _recsError.value = null
+
+            val result = getTimeBasedRecsUseCase(
+                totalCalories = state.totalCalories,
+                totalProtein = state.totalProtein,
+                totalCarbs = state.totalCarbs,
+                totalFat = state.totalFat,
+                goals = macroGoals.value,
+                loggedMealTypes = state.dailyLogs.map { it.mealType }
+            )
+
+            when (result) {
+                is Resource.Success -> {
+                    _recommendations.value = result.data
+                    _recsError.value = null
+                    recsFetchedForDate = date
+                }
+                is Resource.Error -> {
+                    _recsError.value = result.message
+                    _recommendations.value = emptyList()
+                }
+                is Resource.Loading -> { /* no-op */ }
+            }
+            _recsLoading.value = false
+        }
+    }
+
+    /**
+     * Fire-and-forget: trigger prefetch-recommendations Edge Function to refresh
+     * the cache for the next meal slot. Runs in a separate coroutine so it never
+     * blocks the caller. Errors are silently swallowed.
+     *
+     * Called after food log, edit, and delete — mirrors the webapp's
+     * `triggerPrefetch()` pattern.
+     */
+    private fun triggerPrefetchInBackground() {
+        viewModelScope.launch {
+            try {
+                getTimeBasedRecsUseCase.triggerPrefetch()
+            } catch (_: Exception) {
+                // Best-effort — never block the UI
+            }
+        }
+    }
+
+    /**
+     * Add an internet recommendation to the user's food catalog.
+     * Stores per-serving macros (total / suggestedQuantity) with default serving size of 100g.
+     * Background sync will push this to Supabase automatically.
+     */
+    fun addRecommendationToCatalog(rec: Recommendation) {
+        viewModelScope.launch {
+            try {
+                val food = FoodItem(
+                    id = UUID.randomUUID().toString(),
+                    catalogId = Constants.INGREDIENT_CATALOG_ID,
+                    name = rec.name,
+                    baseServingG = 100.0,
+                    // Per-serving macros: divide total by suggested quantity
+                    baseCalories = rec.calories / rec.suggestedQuantity,
+                    baseProtein = rec.protein / rec.suggestedQuantity,
+                    baseCarbs = rec.carbs / rec.suggestedQuantity,
+                    baseFat = rec.fat / rec.suggestedQuantity,
+                    lastModifiedAt = System.currentTimeMillis()
+                )
+                foodRepository.insertFood(food)
+                _addedToFoods.value = _addedToFoods.value + rec.name
+            } catch (e: Exception) {
+                _refreshMessage.tryEmit("Failed to add ${rec.name} to your foods")
             }
         }
     }
@@ -396,6 +572,8 @@ data class EditLogSheet(
     val baseProtein: Double = 0.0,
     val baseCarbs: Double = 0.0,
     val baseFat: Double = 0.0,
+    /** Meal type — pre-filled from the log being edited. */
+    val mealType: MealType = MealType.inferFromCurrentTime(),
     val errorMessage: String? = null,
     val isSaving: Boolean = false
 )

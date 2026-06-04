@@ -16,6 +16,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  *   v3 → v4  Phase 8 Pre-work II: Migration infrastructure scaffolding (no schema change)
  *   v5 → v6  Phase 11: Added label_photos table (nutrition label scanner)
  *   v7 → v8  Phase R4: Added profile columns to user_preferences (AI Recommendations)
+ *   v9 → v10 Phase 18: Normalize food_items base macros to per-100g + recalculate daily_logs
  */
 object Migrations {
 
@@ -172,6 +173,68 @@ object Migrations {
     }
 
     /**
+     * v8 → v9: Add meal_type column to daily_logs (Meal Categories Phase M3).
+     *
+     * Stores the meal category for each food log entry: "breakfast", "snack",
+     * "lunch", or "dinner". Nullable for legacy rows created before this field
+     * was introduced.
+     */
+    val MIGRATION_8_9 = object : Migration(8, 9) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE daily_logs ADD COLUMN meal_type TEXT")
+        }
+    }
+
+    /**
+     * v9 → v10: Normalize all food_items base macros to per-100g.
+     *
+     * Previously base_calories/protein/carbs/fat stored per-serving values
+     * (e.g. 321 kcal for a 200g serving). After this migration they store
+     * per-100g values (160.5 kcal per 100g). base_serving_g is unchanged.
+     *
+     * Formula: normalized = raw × (100 / base_serving_g)
+     * Then recalculate all daily_logs: total = normalized_base × consumed_qty
+     */
+    val MIGRATION_9_10 = object : Migration(9, 10) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            // Step 1: Normalize food_items where base_serving_g != 100
+            db.execSQL("""
+                UPDATE food_items
+                SET base_calories = base_calories * (100.0 / base_serving_g),
+                    base_protein  = base_protein  * (100.0 / base_serving_g),
+                    base_carbs    = base_carbs    * (100.0 / base_serving_g),
+                    base_fat      = base_fat      * (100.0 / base_serving_g)
+                WHERE base_serving_g != 100
+                  AND base_serving_g > 0
+                  AND deleted_at IS NULL
+            """.trimIndent())
+
+            // Step 2: Recalculate daily_logs from normalized food_items
+            db.execSQL("""
+                UPDATE daily_logs
+                SET total_calories = (
+                        SELECT fi.base_calories * daily_logs.consumed_qty
+                        FROM food_items fi WHERE fi.id = daily_logs.food_item_id
+                    ),
+                    total_protein = (
+                        SELECT fi.base_protein * daily_logs.consumed_qty
+                        FROM food_items fi WHERE fi.id = daily_logs.food_item_id
+                    ),
+                    total_carbs = (
+                        SELECT fi.base_carbs * daily_logs.consumed_qty
+                        FROM food_items fi WHERE fi.id = daily_logs.food_item_id
+                    ),
+                    total_fat = (
+                        SELECT fi.base_fat * daily_logs.consumed_qty
+                        FROM food_items fi WHERE fi.id = daily_logs.food_item_id
+                    )
+                WHERE food_item_id IS NOT NULL
+                  AND deleted_at IS NULL
+            """.trimIndent())
+        }
+    }
+
+    /**
      * All migrations in ascending order. Pass as: `.addMigrations(*Migrations.ALL)`
      */
     val ALL: Array<Migration> = arrayOf(
@@ -179,6 +242,8 @@ object Migrations {
         MIGRATION_4_5,
         MIGRATION_5_6,
         MIGRATION_6_7,
-        MIGRATION_7_8
+        MIGRATION_7_8,
+        MIGRATION_8_9,
+        MIGRATION_9_10
     )
 }

@@ -3,7 +3,6 @@ package com.app.nutriai.presentation.screens.log
 import android.net.Uri
 import com.app.nutriai.domain.usecase.ExtractLabelUseCase
 import com.app.nutriai.util.ImageCompressor
-import com.app.nutriai.util.Constants
 import com.app.nutriai.util.Resource
 import com.app.nutriai.util.formatMacro
 import kotlinx.coroutines.CoroutineScope
@@ -52,28 +51,20 @@ class LabelScannerDelegate(
                 when (val result = extractLabelUseCase(compressed.base64, compressed.mimeType)) {
                     is Resource.Success -> {
                         val data = result.data
-                        val hasServingWeight = data.servingWeightG != null && data.servingWeightG > 0
-                        val w = data.servingWeightG ?: 1.0
+                        // Per-100g conversion and form hints are now pre-computed
+                        // by the scan-label Edge Function — no client-side math needed.
                         uiState.update {
                             it.copy(
                                 isExtractingLabel = false,
                                 labelExtractionError = null,
                                 labelPhotoId = compressed.entity.id,
                                 inputMode = LogInputMode.MANUAL_INPUT,
-                                calories = if (hasServingWeight)
-                                    (data.caloriesPerServing / w * Constants.PER_100G_BASE).formatMacro()
-                                else data.caloriesPerServing.formatMacro(),
-                                protein = if (hasServingWeight)
-                                    (data.proteinG / w * Constants.PER_100G_BASE).formatMacro()
-                                else data.proteinG.formatMacro(),
-                                carbs = if (hasServingWeight)
-                                    (data.carbsG / w * Constants.PER_100G_BASE).formatMacro()
-                                else data.carbsG.formatMacro(),
-                                fat = if (hasServingWeight)
-                                    (data.fatG / w * Constants.PER_100G_BASE).formatMacro()
-                                else data.fatG.formatMacro(),
-                                quantity = if (hasServingWeight) w.formatMacro() else "1",
-                                unit = if (hasServingWeight) "g" else "serving"
+                                calories = data.calories.formatMacro(),
+                                protein = data.protein.formatMacro(),
+                                carbs = data.carbs.formatMacro(),
+                                fat = data.fat.formatMacro(),
+                                quantity = data.suggestedQuantity.formatMacro(),
+                                unit = if (data.suggestedUnit == "grams") "g" else data.suggestedUnit
                             )
                         }
                     }

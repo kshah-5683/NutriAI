@@ -6,7 +6,7 @@ package com.app.nutriai.util
 object Constants {
     // Database
     const val DATABASE_NAME = "nutriai_database"
-    const val DATABASE_VERSION = 8
+    const val DATABASE_VERSION = 10
 
     // Sync
     // Reduced from 12h to 24h (Phase 8 Pre-work II): push-on-write + foreground pull handle
@@ -17,8 +17,7 @@ object Constants {
     /** WorkManager unique work name for the periodic background sync job. */
     const val SYNC_WORK_TAG = "nutriai_sync_work"
 
-    // API
-    const val GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/"
+    // API — Gemini base URL removed; AI calls now go through Supabase Edge Functions.
 
     /** USDA FoodData Central — primary online nutrition source. */
     const val USDA_FDC_BASE_URL = "https://api.nal.usda.gov/"

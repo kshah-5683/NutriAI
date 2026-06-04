@@ -5,7 +5,8 @@
  * This file mirrors computeServingMultiplier() so the Log page can show
  * live macro previews without a round-trip. Never use this for persisted data.
  *
- * Port of LogViewModel.computeServingMultiplier() from Android.
+ * CRITICAL: All base macros in food_items are stored PER-100g (normalized at write time).
+ * Port of UnitConverter.computeServingMultiplier() from Android.
  */
 
 import type { ManualRecipeIngredient } from "@/lib/stores/log-form-store";
@@ -16,10 +17,15 @@ export const PER_100G_BASE = 100.0;
 /**
  * Converts quantity + unit to a multiplier against 100g baseline.
  * Must stay in sync with supabase/functions/_shared/macro-calculator.ts.
+ *
+ * @param servingWeightG Optional gram-weight of one serving/discrete unit.
+ *   When provided for "serving", discrete units, or unknown units,
+ *   the multiplier is `quantity * servingWeightG / 100`.
  */
 export function computeServingMultiplier(
   quantity: number,
-  unit: string
+  unit: string,
+  servingWeightG?: number
 ): number {
   const normalizedUnit = unit.toLowerCase().trim();
   switch (normalizedUnit) {
@@ -39,7 +45,11 @@ export function computeServingMultiplier(
     case "cups":
       return (quantity * 240) / PER_100G_BASE;
     default:
-      return quantity; // serving, piece, slice, bowl — treated as 1:1
+      // serving, piece, slice, bowl, unknown — use actual serving weight when available
+      if (servingWeightG != null && servingWeightG > 0) {
+        return (quantity * servingWeightG) / PER_100G_BASE;
+      }
+      return quantity;
   }
 }
 
@@ -70,7 +80,8 @@ export function scaleIngredientMacros(ingredient: ManualRecipeIngredient): {
     ingredient.catalogItem?.baseFat ?? (parseFloat(ingredient.fat) || 0);
 
   const qty = parseFloat(ingredient.quantity) || 0;
-  const multiplier = computeServingMultiplier(qty, ingredient.unit);
+  const servingG = ingredient.catalogItem?.baseServingG;
+  const multiplier = computeServingMultiplier(qty, ingredient.unit, servingG);
 
   return {
     calories: Math.round(baseCal * multiplier * 10) / 10,

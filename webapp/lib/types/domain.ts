@@ -10,6 +10,13 @@
  */
 
 /**
+ * Meal category for daily log entries.
+ * Fixed enum — one of four categories the user selects when logging food.
+ * Snack is repeatable (user can log multiple snacks per day).
+ */
+export type MealType = "breakfast" | "snack" | "lunch" | "dinner";
+
+/**
  * A user's food catalog — groups related food items.
  * Port of Catalog.kt
  */
@@ -65,6 +72,8 @@ export interface DailyLog {
   totalProtein: number;
   totalCarbs: number;
   totalFat: number;
+  /** Meal category: breakfast, snack, lunch, or dinner. Null for legacy uncategorized rows. */
+  mealType: MealType | null;
   lastModifiedAt: number;
   deletedAt: number | null;
 }

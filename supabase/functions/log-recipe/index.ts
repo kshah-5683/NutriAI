@@ -9,14 +9,14 @@
  */
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { PER_100G_BASE } from "../_shared/macro-calculator.ts";
+import { PER_100G_BASE, computeServingMultiplier, isGramUnit } from "../_shared/macro-calculator.ts";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return handleCors();
 
   try {
-    const { recipeName, ingredientMatches, quantity, unit, dateTimestamp, skipDailyLog } =
+    const { recipeName, ingredientMatches, quantity, unit, dateTimestamp, skipDailyLog, mealType } =
       await req.json();
 
     // Validation
@@ -130,16 +130,24 @@ serve(async (req) => {
     }
 
     // Create the recipe FoodItem in the Recipes catalog
+    // Normalize aggregated totals to per-100g before storing.
+    const recipeServingG = totalServingG > 0 ? totalServingG : PER_100G_BASE;
+    const normFactor = PER_100G_BASE / recipeServingG;
+    const normCalories = totalCalories * normFactor;
+    const normProtein  = totalProtein  * normFactor;
+    const normCarbs    = totalCarbs    * normFactor;
+    const normFat      = totalFat      * normFactor;
+
     const recipeItemId = crypto.randomUUID();
     const { error: recipeError } = await supabase.from("food_items").insert({
       id: recipeItemId,
       catalog_id: recipeCatalogId,
       name: recipeName.trim(),
-      base_serving_g: totalServingG > 0 ? totalServingG : PER_100G_BASE,
-      base_calories: totalCalories,
-      base_protein: totalProtein,
-      base_carbs: totalCarbs,
-      base_fat: totalFat,
+      base_serving_g: recipeServingG,
+      base_calories: normCalories,
+      base_protein: normProtein,
+      base_carbs: normCarbs,
+      base_fat: normFat,
       last_modified_at: now,
       is_synced: true,
       deleted_at: null,
@@ -151,19 +159,25 @@ serve(async (req) => {
 
     // Create the daily log entry
     if (!skipDailyLog) {
-      const scaleFactor = quantity;
+      const normalizedUnit = (unit?.trim() || "serving").toLowerCase();
+      const scaleFactor = computeServingMultiplier(quantity, normalizedUnit, recipeServingG);
+
+      // For gram/ml units: store as 100g-relative multiplier (200g → 2.0)
+      const storedQty = isGramUnit(normalizedUnit) ? quantity / PER_100G_BASE : quantity;
+
       const { error: logError } = await supabase.from("daily_logs").insert({
         id: crypto.randomUUID(),
         user_id: userId,
         food_item_id: recipeItemId,
         food_name: recipeName.trim(),
         date_timestamp: dateTimestamp,
-        consumed_qty: quantity,
+        consumed_qty: storedQty,
         consumed_unit: unit?.trim() || "serving",
-        total_calories: totalCalories * scaleFactor,
-        total_protein: totalProtein * scaleFactor,
-        total_carbs: totalCarbs * scaleFactor,
-        total_fat: totalFat * scaleFactor,
+        total_calories: normCalories * scaleFactor,
+        total_protein: normProtein * scaleFactor,
+        total_carbs: normCarbs * scaleFactor,
+        total_fat: normFat * scaleFactor,
+        meal_type: mealType ?? null,
         last_modified_at: now,
         is_synced: true,
         deleted_at: null,

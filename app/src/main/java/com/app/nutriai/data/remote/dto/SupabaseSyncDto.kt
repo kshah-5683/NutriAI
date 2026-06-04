@@ -97,6 +97,8 @@ data class RemoteDailyLogDto(
     @SerialName("total_protein") val totalProtein: Double,
     @SerialName("total_carbs") val totalCarbs: Double,
     @SerialName("total_fat") val totalFat: Double,
+    /** Meal category: "breakfast", "snack", "lunch", "dinner". Null for legacy rows. */
+    @SerialName("meal_type") val mealType: String? = null,
     @SerialName("last_modified_at") val lastModifiedAt: Long,
     @SerialName("is_synced") val isSynced: Boolean = true,
     @SerialName("deleted_at") val deletedAt: Long? = null,
@@ -164,6 +166,7 @@ fun DailyLogEntity.toRemoteDto(supabaseUserId: String): RemoteDailyLogDto =
         totalProtein = totalProtein,
         totalCarbs = totalCarbs,
         totalFat = totalFat,
+        mealType = mealType,
         lastModifiedAt = lastModifiedAt,
         isSynced = true,
         deletedAt = deletedAt
@@ -230,6 +233,7 @@ fun RemoteDailyLogDto.toEntity(localUserId: String): DailyLogEntity =
         totalProtein = totalProtein,
         totalCarbs = totalCarbs,
         totalFat = totalFat,
+        mealType = mealType,
         lastModifiedAt = lastModifiedAt,
         isSynced = true,
         deletedAt = deletedAt

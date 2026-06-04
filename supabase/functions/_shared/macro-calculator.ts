@@ -1,7 +1,8 @@
 /**
  * Canonical macro calculation utilities.
- * Port of LogViewModel.computeServingMultiplier() + LogFoodUseCase scaling from Android.
+ * Port of UnitConverter.computeServingMultiplier() from Android.
  *
+ * CRITICAL: All base macros in food_items are stored PER-100g (normalized at write time).
  * These functions are the SOURCE OF TRUTH for macro calculations on the server.
  * The client-side macro-calculator.ts in webapp/lib/utils/ is for preview only.
  */
@@ -11,11 +12,17 @@ export const PER_100G_BASE = 100.0;
 
 /**
  * Converts quantity + unit to a multiplier against 100g baseline.
- * Direct port of LogViewModel.computeServingMultiplier() from Android.
+ * Direct port of UnitConverter.computeServingMultiplier() from Android.
+ *
+ * @param servingWeightG Optional gram-weight of one serving/discrete unit.
+ *   When provided for "serving", discrete units (piece/slice/bowl), or unknown
+ *   units, the multiplier is `quantity * servingWeightG / 100` instead of
+ *   `quantity × 1.0` (which assumes 100g per unit).
  */
 export function computeServingMultiplier(
   quantity: number,
-  unit: string
+  unit: string,
+  servingWeightG?: number
 ): number {
   const normalizedUnit = unit.toLowerCase().trim();
   switch (normalizedUnit) {
@@ -35,8 +42,18 @@ export function computeServingMultiplier(
     case "cups":
       return (quantity * 240) / PER_100G_BASE;
     default:
-      return quantity; // serving, piece, slice, bowl — treated as 1:1
+      // serving, piece, slice, bowl, unknown — use actual serving weight when available
+      if (servingWeightG != null && servingWeightG > 0) {
+        return (quantity * servingWeightG) / PER_100G_BASE;
+      }
+      return quantity;
   }
+}
+
+/** Returns true if the unit represents grams. */
+export function isGramUnit(unit: string): boolean {
+  const u = unit.toLowerCase().trim();
+  return u === "g" || u === "gram" || u === "grams";
 }
 
 /**
@@ -63,13 +80,9 @@ export function scaleNutrition(
 /**
  * Computes daily log totals from base macros and consumed quantity.
  *
- * CRITICAL: base macros are PER-SERVING (not per-gram).
- * scaleFactor = consumedQty (number of servings).
- *
- * This is the corrected formula — the Android app had a bug where
- * sync recalculation used base_macro * consumed_qty / base_serving_g
- * which is WRONG. The fix (Phase 8 Pre-work II bugfix #1) confirmed:
- *   total = base_macro * consumed_qty
+ * CRITICAL: base macros are PER-100g (normalized at write time).
+ * consumedQty is a 100g-relative multiplier (e.g. 200g → 2.0, 1 serving of 200g item → 2.0).
+ *   total = base_macro_per_100g * consumed_qty_multiplier
  */
 export function computeDailyLogTotals(
   baseMacros: {

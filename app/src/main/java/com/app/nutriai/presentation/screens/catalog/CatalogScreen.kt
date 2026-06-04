@@ -343,10 +343,12 @@ private fun CatalogFoodCard(
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    MacroLabel("${foodItem.baseCalories.roundToInt()} kcal", CalorieColor)
-                    MacroLabel("P: ${foodItem.baseProtein.roundToInt()}g", ProteinColor)
-                    MacroLabel("C: ${foodItem.baseCarbs.roundToInt()}g", CarbsColor)
-                    MacroLabel("F: ${foodItem.baseFat.roundToInt()}g", FatColor)
+                    // Denormalize per-100g base macros to per-serving for display
+                    val servingScale = foodItem.baseServingG / 100.0
+                    MacroLabel("${(foodItem.baseCalories * servingScale).roundToInt()} kcal", CalorieColor)
+                    MacroLabel("P: ${(foodItem.baseProtein * servingScale).roundToInt()}g", ProteinColor)
+                    MacroLabel("C: ${(foodItem.baseCarbs * servingScale).roundToInt()}g", CarbsColor)
+                    MacroLabel("F: ${(foodItem.baseFat * servingScale).roundToInt()}g", FatColor)
                 }
                 Text(
                     text = "per ${foodItem.baseServingG.roundToInt()}g serving",

@@ -13,6 +13,8 @@ interface MacroPreviewCardProps {
   quantity: number;
   /** Unit string — used for correct multiplier calculation. Defaults to "serving". */
   unit?: string;
+  /** Gram-weight of one serving. Passed to computeServingMultiplier for "serving" units. */
+  servingWeightG?: number;
 }
 
 /**
@@ -27,8 +29,9 @@ export function MacroPreviewCard({
   fat,
   quantity,
   unit = "serving",
+  servingWeightG,
 }: MacroPreviewCardProps) {
-  const multiplier = computeServingMultiplier(quantity, unit);
+  const multiplier = computeServingMultiplier(quantity, unit, servingWeightG);
   const total = {
     calories: calories * multiplier,
     protein: protein * multiplier,

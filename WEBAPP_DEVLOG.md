@@ -24,6 +24,7 @@
 - [Phase W9: Manual Recipe Builder + Catalog Navigation Fix + Catalog Miss Bug](#phase-w9-manual-recipe-builder--catalog-navigation-fix--catalog-miss-bug)
 - [Phase W10: Serving Size Clarification — Brand-Aware Nutrition Lookup](#phase-w10-serving-size-clarification--brand-aware-nutrition-lookup)
 - [Phase W10.1: Clarification Robustness — Prompt Expansion, Brand Validation & Dark Mode Fix](#phase-w101-clarification-robustness--prompt-expansion-brand-validation--dark-mode-fix)
+- [Phase W11: Edit Log Macro Scaling Guard — Gram ↔ Non-Gram Boundary](#phase-w11-edit-log-macro-scaling-guard--gram--non-gram-boundary)
 - [Architecture Decisions](#architecture-decisions)
 - [Known Issues & Tech Debt](#known-issues--tech-debt)
 
@@ -479,6 +480,8 @@ supabase functions deploy parse-food    # mapFoodItem() snake_case → camelCase
 | 13 | ~~Android batch upsert PGRST102 blocked TC-30 Android→Web sync~~ | ~~Critical~~ | W5 | ✅ Fixed (Android) | `kotlinx.serialization` `explicitNulls = false` stripped nullable fields from some objects, making PostgREST batch key-set check fail. Fixed on Android via `@Named("supabase") Json` with `explicitNulls = true`. No webapp changes needed — server schema and RLS were correct. |
 | 14 | ~~Android cross-user Room contamination caused 403 RLS on food_items upsert~~ | ~~Critical~~ | W5 | ✅ Fixed (Android) | Stale Room rows from a previous user were pushed under a new user's token, failing RLS UPDATE check. Fixed on Android: `signOut()` now wipes all user-specific Room tables and resets the sync cursor. No webapp changes needed. |
 | 15 | ~~Android EditLogSheet pushes stale macros when only qty changes~~ | ~~High~~ | W5 | ✅ Fixed (Android) | Edit sheet didn't recalculate totals on qty change — webapp showed updated qty but old macros. Fixed: `updateEditQty()`/`updateEditUnit()` now auto-recalculate from per-serving base macros. No webapp changes needed. |
+| 16 | Per-serving vs per-100g macro mismatch — cross-platform | Critical | W11 | 🔲 Planned | `food_items.base_calories` stores per-serving macros but `computeServingMultiplier()` assumes per-100g. Editing log from "1 serving" to "150g" produces 481 kcal instead of 241. Phase W11 guard is symptomatic. Architectural fix: normalize all `base_*` to per-100g at write time in Edge Functions (`log-food`, `log-recipe`), update `_shared/macro-calculator.ts`, migrate existing data. Plan: `~/.wibey/plans/per100g_normalization_b0f402b8.plan.md`. |
+| 17 | `log-recipe` EF stores raw gram qty without `/100` conversion | High | W11 | 🔲 Planned | `log-recipe/index.ts` line 154: `consumed_qty: quantity` — unlike `log-food` which does `quantity / 100` for gram units. Results in inflated macro totals for gram-based recipe logs. To be fixed in per-100g normalization. |
 
 ---
 
@@ -969,6 +972,149 @@ supabase functions deploy lookup-nutrition   # brand validation fix
 | W45 | Three-case ambiguity detection (A/B/C) over single-case | Case A alone missed two common scenarios: bare generic names ("cheese") and specific foods without amounts ("cheddar cheese"). Both produce meaningless default `1 serving` lookups. Case B+C catch these with weight-focused hints. |
 | W46 | Brand validation via result field matching, not query restructuring | FDC's keyword search cannot be constrained to an exact brand. Post-hoc validation (checking the returned `brand` field) is simple, reliable, and degrades gracefully to generic when the brand isn't in FDC. |
 | W47 | Semantic dark-mode CSS variables over hardcoded colors | Same pattern as Android's `MaterialTheme.colorScheme` — define role-based tokens (`--bg-warning`, `--bg-primary-container`) that swap values in `.dark`. Components reference one name; the theme handles the rest. |
+
+---
+
+## Phase W11: Edit Log Macro Scaling Guard — Gram ↔ Non-Gram Boundary
+
+**Status:** ✅ Completed (symptomatic fix — architectural fix planned in per-100g normalization)
+**Date:** June 2, 2026
+
+### Summary
+
+Added a guard to the `EditLogSheet` proportional scaling logic that skips auto-recalculation when the unit type crosses the gram ↔ non-gram boundary. Port of Android Phase 18 fix.
+
+The webapp's `edit-log-sheet.tsx` already had proportional scaling (ratio-based: `newMultiplier / orig.consumedQty`), but suffered the same fundamental issue as Android: the original log's `consumedQty` and `total_*` values are in the original unit system. Switching from "1 serving" to "150g" would compute `fromDisplayQty(150, "g") = 1.5`, then `ratio = 1.5 / 1.0 = 1.5`, producing `321 × 1.5 = 481 kcal` instead of the expected 241 kcal (150g of a 321 kcal per 200g item).
+
+**Fix:** Skip scaling when `isGramUnit(newUnit) !== isGramUnit(orig.consumedUnit)`. The user must adjust macros manually after a unit-type change. This guard will be removed after per-100g macro normalization.
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `webapp/components/edit-log-sheet.tsx` | Updated | `scaleMacros()` function: Added `isGramUnit(resolvedUnit) !== isGramUnit(orig.consumedUnit)` guard at line 79. When unit types differ, returns early — macro fields remain at their current values. User can manually adjust. |
+
+### Key Implementation Details
+
+**Guard in `scaleMacros()`:**
+```tsx
+const scaleMacros = (displayQty: number, resolvedUnit: string) => {
+  const orig = originalLogRef.current;
+  if (!orig || orig.consumedQty <= 0 || displayQty <= 0) return;
+
+  // Don't auto-scale when switching between gram ↔ non-gram unit types.
+  if (isGramUnit(resolvedUnit) !== isGramUnit(orig.consumedUnit)) return;
+
+  const newMultiplier = fromDisplayQty(displayQty, resolvedUnit);
+  const ratio = newMultiplier / orig.consumedQty;
+  // ... scale all macros by ratio
+};
+```
+
+### Cross-Platform Parity
+
+| Platform | File | Guard |
+|----------|------|-------|
+| Android | `HomeViewModel.kt` `updateEditQty()` / `updateEditUnit()` | `UnitConverter.isGramsUnit(unit) != UnitConverter.isGramsUnit(originalUnit)` |
+| Webapp | `edit-log-sheet.tsx` `scaleMacros()` | `isGramUnit(resolvedUnit) !== isGramUnit(orig.consumedUnit)` |
+
+Both guards are symptomatic fixes that will be removed after per-100g macro normalization.
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| W52 | Skip auto-scaling on gram ↔ non-gram unit type change | Same as Android Phase 18 decision #77. Ratio-based scaling breaks when the original log was in a different unit system because `consumedQty` semantics change (servings vs 100g-relative multiplier). Skipping is safe — manual macro editing is still available. |
+
+---
+
+## Feature 1: Internet Recommendations Infrastructure
+
+### Phase W-R4: User Profile Setup — Webapp
+
+**Status:** ✅ Completed
+**Date:** June 2, 2026
+
+### Summary
+
+Full user profile setup for AI-powered meal recommendations on the webapp. Users configure dietary preferences (diet type, cuisines, allergies, weight goal, age, gender, weight) via a settings card. Profile is persisted to Supabase `user_preferences` table and read by the `recommend-meals` edge function when `includeInternet=true`.
+
+Includes a critical race condition fix: saving profile data caused it to visually disappear due to TanStack Query cache invalidation interleaving with React state re-seeding.
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `webapp/lib/types/domain.ts` | Updated | Added `UserProfile` interface with 8 profile fields. Extended `UserPreferences` interface with same fields. |
+| 2 | `webapp/lib/types/database.ts` | Updated | Extended `user_preferences` Row/Insert/Update types with `age`, `gender`, `weight_kg`, `weight_goal`, `diet_type`, `cuisine_preferences: string[]`, `allergies: string[]`, `recommendations_enabled`. |
+| 3 | `webapp/lib/hooks/use-user-profile.ts` | **New** | `useUserProfile()` — TanStack Query hook fetching profile columns from `user_preferences`. `useUpdateProfile()` — mutation using `.upsert()` with `onConflict: "user_id"`, invalidates `user-profile` and `recommendations` query keys on success. |
+| 4 | `webapp/app/settings/profile-section.tsx` | **New** | Profile settings card with: enable toggle, age/weight inputs, gender/diet type selects, weight goal radio chips, cuisine/allergy multi-select chip grids with custom text input. Client-side `sanitizeEntry()` for prompt injection defense. Fingerprint-based re-seed guard to prevent race conditions. |
+| 5 | `webapp/app/settings/page.tsx` | Updated | Added `<ProfileSection />` between Daily Goals card and Appearance card. |
+| 6 | `supabase/functions/recommend-meals/index.ts` | Updated | Added `sanitizeProfileEntry()` — server-side authoritative sanitization applied to cuisine and allergy arrays before prompt injection. |
+
+### Key Implementation Details
+
+**Race condition fix — fingerprint-based re-seed guard:**
+
+The original implementation used a boolean `initialized` state that was set to `false` in `onSuccess` to trigger re-seeding from the server after save. The problem: `invalidateQueries` is async, so the `useEffect` ran immediately with the stale cached `profile`, overwriting the just-saved values.
+
+Fix: Replace the boolean with a `useRef` fingerprint (JSON.stringify of the profile). On save, optimistically set the fingerprint to match the saved data. When the async refetch returns, the effect sees a matching fingerprint and skips re-seeding.
+
+```tsx
+const seededFromRef = useRef<string | null>(null);
+
+useEffect(() => {
+  if (!profile) return;
+  const fingerprint = JSON.stringify(profile);
+  if (seededFromRef.current === fingerprint) return;
+  seededFromRef.current = fingerprint;
+  // ... seed all form fields from profile
+}, [profile]);
+
+const handleSave = () => {
+  const updatedProfile: UserProfile = { /* ... build from local state */ };
+  // Optimistically set fingerprint to prevent stale re-seed
+  seededFromRef.current = JSON.stringify(updatedProfile);
+  updateProfile.mutate(updatedProfile);
+};
+```
+
+**Custom cuisine/allergy input with sanitization:**
+```tsx
+function sanitizeEntry(raw: string): string {
+  return raw
+    .replace(/<[^>]*>/g, "")
+    .replace(/[#*_~`\[\]{}()|\\]/g, "")
+    .replace(/[\x00-\x1F\x7F]/g, "")
+    .trim()
+    .slice(0, 40);
+}
+```
+
+### Prompt Injection Defense (3-Layer)
+
+Custom entries are user-provided free text that flows into the AI recommendation prompt:
+
+| Layer | Location | Function | Purpose |
+|-------|----------|----------|---------|
+| 1 (Authoritative) | `supabase/functions/recommend-meals/index.ts` | `sanitizeProfileEntry()` | Server-side — strips HTML, markdown, control chars, truncates to 40 chars. |
+| 2 | `webapp/app/settings/profile-section.tsx` | `sanitizeEntry()` + `maxLength={40}` | Webapp client — identical logic, pre-save. |
+| 3 | Android `ProfileSetupSheet.kt` | `sanitizeEntry()` + `MAX_ENTRY_LENGTH = 40` | Android client — identical logic, pre-save. |
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| W48 | Fingerprint-based re-seed guard over boolean `initialized` flag | A boolean reset in `onSuccess` triggers the `useEffect` immediately with stale TanStack Query cache data before the async refetch completes. A JSON.stringify fingerprint stored in a `useRef` prevents re-seeding when the profile hasn't actually changed from the server's perspective. Optimistic fingerprint update on save blocks the stale interleave window. |
+| W49 | `useRef` over `useState` for seed fingerprint | `useRef` doesn't trigger re-renders. The fingerprint is an internal guard, not a rendered value — using `useState` would cause unnecessary re-renders on every profile fetch. |
+| W50 | 3-layer sanitization for custom profile entries | Server-side sanitization is authoritative. Client-side sanitization provides immediate UX feedback (no round-trip to discover truncation). Identical regex across all three layers ensures consistent behavior regardless of entry point. |
+| W51 | `onConflict: "user_id"` upsert for profile save | The webapp doesn't have a local database — it writes directly to Supabase. Upsert with conflict on `user_id` ensures idempotent saves whether the row exists or not. Combined with column-level update (only profile fields, not macro goal fields) to prevent wiping goals. |
+
+### Edge Function Deployment Required
+
+```bash
+supabase functions deploy recommend-meals  # sanitizeProfileEntry + profile-aware prompts
+```
 
 ---
 

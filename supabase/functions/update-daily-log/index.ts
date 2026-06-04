@@ -14,7 +14,7 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return handleCors();
 
   try {
-    const { logId, quantity, unit, calories, protein, carbs, fat } =
+    const { logId, quantity, unit, calories, protein, carbs, fat, mealType } =
       await req.json();
 
     // Validation
@@ -49,18 +49,25 @@ serve(async (req) => {
 
     const now = Date.now();
 
+    // Build update payload — only include mealType if explicitly provided
+    // (undefined means the caller didn't send it, null means clear it)
+    const updatePayload: Record<string, unknown> = {
+      consumed_qty: quantity,
+      consumed_unit: unit?.trim() || "serving",
+      total_calories: calories ?? 0,
+      total_protein: protein ?? 0,
+      total_carbs: carbs ?? 0,
+      total_fat: fat ?? 0,
+      last_modified_at: now,
+      is_synced: true,
+    };
+    if (mealType !== undefined) {
+      updatePayload.meal_type = mealType;
+    }
+
     const { error } = await supabase
       .from("daily_logs")
-      .update({
-        consumed_qty: quantity,
-        consumed_unit: unit?.trim() || "serving",
-        total_calories: calories ?? 0,
-        total_protein: protein ?? 0,
-        total_carbs: carbs ?? 0,
-        total_fat: fat ?? 0,
-        last_modified_at: now,
-        is_synced: true,
-      })
+      .update(updatePayload)
       .eq("id", logId)
       .is("deleted_at", null);
 

@@ -21,6 +21,7 @@ import { useEffect, useState } from "react";
  */
 export default function LogPage() {
   const inputMode = useLogFormStore((s) => s.inputMode);
+  const mealType = useLogFormStore((s) => s.mealType);
   const parsedFoods = useLogFormStore((s) => s.parsedFoods);
   const nutritionResults = useLogFormStore((s) => s.nutritionResults);
   const selectedDate = useDateStore((s) => s.selectedDate);
@@ -91,6 +92,7 @@ export default function LogPage() {
           quantity: food.quantity,
           unit: food.unit,
           dateTimestamp,
+          mealType,
         };
         await logRecipe.mutateAsync(request);
       } else {
@@ -98,21 +100,27 @@ export default function LogPage() {
         const nutrition = nutritionResults[food.name] ?? null;
         const catalogItem = food.catalogMatch?.foodItem;
 
+        // Catalog macros are per-100g; the log-food Edge Function expects per-serving.
+        // De-normalize: perServing = per100g × (servingG / 100).
+        // Mirrors Android acceptAndLogAllParsed() lines 818-821.
+        const servingG = catalogItem?.baseServingG ?? 100;
+        const deNorm = servingG / 100;
+
         await logFood.mutateAsync({
           foodName: food.name,
           brand: nutrition?.brand ?? undefined,
-          baseServingG: catalogItem?.baseServingG ?? 100,
+          baseServingG: servingG,
           baseCalories: catalogItem
-            ? (catalogItem.baseCalories ?? 0)
+            ? (catalogItem.baseCalories ?? 0) * deNorm
             : (nutrition?.caloriesPer100g ?? 0),
           baseProtein: catalogItem
-            ? (catalogItem.baseProtein ?? 0)
+            ? (catalogItem.baseProtein ?? 0) * deNorm
             : (nutrition?.proteinPer100g ?? 0),
           baseCarbs: catalogItem
-            ? (catalogItem.baseCarbs ?? 0)
+            ? (catalogItem.baseCarbs ?? 0) * deNorm
             : (nutrition?.carbsPer100g ?? 0),
           baseFat: catalogItem
-            ? (catalogItem.baseFat ?? 0)
+            ? (catalogItem.baseFat ?? 0) * deNorm
             : (nutrition?.fatPer100g ?? 0),
           consumedQty: food.quantity,
           consumedUnit: food.unit,
@@ -122,6 +130,7 @@ export default function LogPage() {
             : undefined,
           externalApiId: nutrition?.externalId ?? undefined,
           catalogId: getIngredientCatalogId(userId),
+          mealType,
         });
       }
     }

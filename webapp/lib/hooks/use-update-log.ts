@@ -3,6 +3,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSupabase } from "@/components/providers/supabase-provider";
 import { EDGE_FUNCTIONS } from "@/lib/utils/constants";
+import { triggerPrefetch } from "@/lib/utils/prefetch-trigger";
+import type { MealType } from "@/lib/types/domain";
 
 interface UpdateLogParams {
   logId: string;
@@ -12,6 +14,8 @@ interface UpdateLogParams {
   protein: number;
   carbs: number;
   fat: number;
+  /** Meal category — only sent when the user changes it in the edit sheet */
+  mealType?: MealType | null;
 }
 
 /**
@@ -33,11 +37,12 @@ export function useUpdateLog() {
       protein,
       carbs,
       fat,
+      mealType,
     }: UpdateLogParams) => {
       const { data, error } = await supabase.functions.invoke(
         EDGE_FUNCTIONS.UPDATE_DAILY_LOG,
         {
-          body: { logId, quantity, unit, calories, protein, carbs, fat },
+          body: { logId, quantity, unit, calories, protein, carbs, fat, mealType },
         }
       );
 
@@ -46,6 +51,8 @@ export function useUpdateLog() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["daily-logs"] });
+      queryClient.invalidateQueries({ queryKey: ["recommendation-cache"] });
+      triggerPrefetch(supabase);
     },
   });
 }

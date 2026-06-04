@@ -47,9 +47,17 @@ export function ParsedFoodCard({
     nutritionInfo?.matchType === "generic";
 
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={() => onSelect(index)}
-      className="w-full rounded-lg border p-3 text-left transition-colors"
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(index);
+        }
+      }}
+      className="w-full cursor-pointer rounded-lg border p-3 text-left transition-colors"
       style={{
         backgroundColor: isSelected
           ? "var(--bg-primary-container)"
@@ -165,7 +173,7 @@ export function ParsedFoodCard({
           </div>
         </div>
       )}
-    </button>
+    </div>
   );
 }
 

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useSupabase } from "@/components/providers/supabase-provider";
 import { useLogFormStore } from "@/lib/stores/log-form-store";
 import { EDGE_FUNCTIONS } from "@/lib/utils/constants";
+import { triggerPrefetch } from "@/lib/utils/prefetch-trigger";
 import type { LogRecipeRequest } from "@/lib/types/ai";
 
 export type { LogRecipeRequest };
@@ -33,6 +34,8 @@ export function useLogRecipe() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["daily-logs"] });
+      queryClient.invalidateQueries({ queryKey: ["recommendation-cache"] });
+      triggerPrefetch(supabase);
       resetForm();
       router.push("/");
     },

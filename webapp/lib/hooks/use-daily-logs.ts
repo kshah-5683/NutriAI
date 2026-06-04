@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useSupabase } from "@/components/providers/supabase-provider";
 import { useDateStore } from "@/lib/stores/date-store";
 import { startOfDayMs, toLocalDateString } from "@/lib/utils/format";
-import type { DailyLog } from "@/lib/types/domain";
+import type { DailyLog, MealType } from "@/lib/types/domain";
 
 /**
  * Returns the start-of-day timestamp for the day AFTER the given date.
@@ -32,6 +32,7 @@ function mapRow(row: Record<string, unknown>): DailyLog {
     totalProtein: row.total_protein as number,
     totalCarbs: row.total_carbs as number,
     totalFat: row.total_fat as number,
+    mealType: (row.meal_type as MealType) ?? null,
     lastModifiedAt: row.last_modified_at as number,
     deletedAt: (row.deleted_at as number) ?? null,
   };

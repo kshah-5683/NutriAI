@@ -5,6 +5,7 @@ import { useLogFormStore } from "@/lib/stores/log-form-store";
 import { useParseFood } from "@/lib/hooks/use-parse-food";
 import { useNutritionLookup } from "@/lib/hooks/use-nutrition-lookup";
 import { ParsedFoodCard } from "@/components/parsed-food-card";
+import { MealTypeSelector } from "@/components/meal-type-selector";
 import { Button } from "@/components/ui/button";
 
 interface AiInputSectionProps {
@@ -151,6 +152,9 @@ export function AiInputSection({ onLogAll, onLogAllLoading }: AiInputSectionProp
       {/* Parsed results */}
       {hasParsedFoods && (
         <div className="space-y-2">
+          {/* Meal type selector — shown after parse, before Log All */}
+          <MealTypeSelector />
+
           <div className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
             {parsedFoods.length} item{parsedFoods.length !== 1 ? "s" : ""} found
           </div>

@@ -30,8 +30,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // API keys are stored in local.properties (not committed to VCS)
-        // Access via BuildConfig.GEMINI_API_KEY
-        buildConfigField("String", "GEMINI_API_KEY", "\"${localProperties.getProperty("GEMINI_API_KEY", "")}\"")
+        // GEMINI_API_KEY removed — AI calls now go through Supabase Edge Functions (key stays server-side)
         buildConfigField("String", "SUPABASE_URL", "\"${localProperties.getProperty("SUPABASE_URL", "")}\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"${localProperties.getProperty("SUPABASE_ANON_KEY", "")}\"")
         // Phase 5.5: USDA FoodData Central API key (free — https://fdc.nal.usda.gov/api-key-signup.html)

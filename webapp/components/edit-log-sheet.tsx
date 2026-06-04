@@ -4,9 +4,10 @@ import { useState, useEffect, useRef } from "react";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { MealTypeSelector } from "@/components/meal-type-selector";
 import { useUpdateLog } from "@/lib/hooks/use-update-log";
 import { toDisplayQty, fromDisplayQty } from "@/lib/utils/unit-converter";
-import type { DailyLog } from "@/lib/types/domain";
+import type { DailyLog, MealType } from "@/lib/types/domain";
 
 interface EditLogSheetProps {
   log: DailyLog | null;
@@ -35,6 +36,7 @@ export function EditLogSheet({ log, onClose }: EditLogSheetProps) {
   const [protein, setProtein] = useState("");
   const [carbs, setCarbs] = useState("");
   const [fat, setFat] = useState("");
+  const [mealType, setMealType] = useState<MealType>("breakfast");
   const [error, setError] = useState("");
 
   // Original log stored as stable reference for proportional scaling.
@@ -52,6 +54,7 @@ export function EditLogSheet({ log, onClose }: EditLogSheetProps) {
       setProtein(String(log.totalProtein));
       setCarbs(String(log.totalCarbs));
       setFat(String(log.totalFat));
+      setMealType(log.mealType ?? "breakfast");
       setError("");
     }
   }, [log]);
@@ -62,10 +65,14 @@ export function EditLogSheet({ log, onClose }: EditLogSheetProps) {
   /**
    * Recompute all 4 macro fields proportionally from the original log values.
    * ratio = newConsumedQtyMultiplier / originalConsumedQtyMultiplier
+   *
+   * After per-100g normalization, base macros are always per-100g regardless
+   * of the original unit system, so cross-unit-type scaling works correctly.
    */
   const scaleMacros = (displayQty: number, resolvedUnit: string) => {
     const orig = originalLogRef.current;
     if (!orig || orig.consumedQty <= 0 || displayQty <= 0) return;
+
     const newMultiplier = fromDisplayQty(displayQty, resolvedUnit);
     const ratio = newMultiplier / orig.consumedQty;
     setCalories(fmtMacro(orig.totalCalories * ratio));
@@ -115,6 +122,7 @@ export function EditLogSheet({ log, onClose }: EditLogSheetProps) {
         protein: pro,
         carbs: crb,
         fat: ft,
+        mealType,
       });
       onClose();
     } catch (err) {
@@ -130,6 +138,9 @@ export function EditLogSheet({ log, onClose }: EditLogSheetProps) {
           <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
             {log.foodName}
           </p>
+
+          {/* Meal type */}
+          <MealTypeSelector value={mealType} onChange={setMealType} />
 
           <div className="grid grid-cols-2 gap-3">
             <Input

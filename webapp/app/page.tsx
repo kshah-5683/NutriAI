@@ -5,10 +5,12 @@ import { DashboardShell } from "@/components/dashboard-shell";
 import { DateNavigationHeader } from "@/components/date-navigation-header";
 import { MacroSummaryCard } from "@/components/macro-summary-card";
 import { FoodLogList } from "@/components/food-log-list";
+import { RecommendationCard } from "@/components/recommendation-card";
 import { EditLogSheet } from "@/components/edit-log-sheet";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { useDailyLogs } from "@/lib/hooks/use-daily-logs";
 import { useMacroGoals } from "@/lib/hooks/use-macro-goals";
+import { useCachedRecommendations } from "@/lib/hooks/use-cached-recommendations";
 import { computeDailyTotals } from "@/lib/utils/compute-daily-totals";
 import { useDateStore } from "@/lib/stores/date-store";
 import type { DailyLog } from "@/lib/types/domain";
@@ -22,6 +24,14 @@ export default function HomePage() {
   const selectedDate = useDateStore((s) => s.selectedDate);
   const { data: logs = [], isLoading: logsLoading } = useDailyLogs();
   const { data: goals } = useMacroGoals();
+
+  const {
+    data: recommendations = [],
+    isLoading: recsLoading,
+    error: recsError,
+    nextMeal,
+    missedMeals,
+  } = useCachedRecommendations();
 
   const [editingLog, setEditingLog] = useState<DailyLog | null>(null);
   const [deletingLog, setDeletingLog] = useState<DailyLog | null>(null);
@@ -44,6 +54,14 @@ export default function HomePage() {
     <DashboardShell>
       <DateNavigationHeader />
       <MacroSummaryCard totals={totals} goals={safeGoals} />
+
+      <RecommendationCard
+        recommendations={recommendations}
+        isLoading={recsLoading}
+        error={recsError?.message ?? null}
+        nextMeal={nextMeal}
+        missedMeals={missedMeals}
+      />
 
       <div className="mt-4">
         <FoodLogList

@@ -17,6 +17,7 @@ import com.app.nutriai.data.repository.CatalogRepositoryImpl
 import com.app.nutriai.data.repository.DailyLogRepositoryImpl
 import com.app.nutriai.data.repository.FoodRepositoryImpl
 import com.app.nutriai.data.repository.NutritionRepositoryImpl
+import com.app.nutriai.data.repository.RecommendationRepositoryImpl
 import com.app.nutriai.data.repository.SyncRepositoryImpl
 import com.app.nutriai.data.repository.UserRepositoryImpl
 import com.app.nutriai.domain.repository.AiRepository
@@ -25,6 +26,7 @@ import com.app.nutriai.domain.repository.CatalogRepository
 import com.app.nutriai.domain.repository.DailyLogRepository
 import com.app.nutriai.domain.repository.FoodRepository
 import com.app.nutriai.domain.repository.NutritionRepository
+import com.app.nutriai.domain.repository.RecommendationRepository
 import com.app.nutriai.domain.repository.SyncRepository
 import com.app.nutriai.domain.repository.UserRepository
 import com.app.nutriai.util.Constants
@@ -156,4 +158,11 @@ abstract class RepositoryBindingsModule {
     @Binds
     @Singleton
     abstract fun bindSyncRepository(impl: SyncRepositoryImpl): SyncRepository
+
+    /**
+     * Phase R2: Binds [RecommendationRepositoryImpl] (Supabase Edge Function) to [RecommendationRepository].
+     */
+    @Binds
+    @Singleton
+    abstract fun bindRecommendationRepository(impl: RecommendationRepositoryImpl): RecommendationRepository
 }

@@ -842,38 +842,261 @@ Plus DTOs and UI:
 
 ---
 
-## Implementation Order (within Feature 2)
+## Phase M-Android: Android Meal Type UI
+
+**Status: NOT STARTED**
+**Prerequisite:** Room migration v8→v9 (DONE), sync mappers (DONE), `meal_type` column in Supabase (DONE)
+
+This phase adds the meal type selector to the Android Log screen and grouped meal headers to the Home screen. The data layer is already complete — this is purely UI + ViewModel work.
+
+### Step MA.1 — MealType Enum + inferMealType Utility
+
+**File:** `app/src/main/java/com/app/nutriai/domain/model/MealType.kt` (NEW)
+
+```kotlin
+package com.app.nutriai.domain.model
+
+/**
+ * Meal category for daily log entries.
+ * Matches webapp MealType = "breakfast" | "snack" | "lunch" | "dinner".
+ * Stored as TEXT in Room and Supabase for cross-platform sync compatibility.
+ */
+enum class MealType(val value: String) {
+    BREAKFAST("breakfast"),
+    LUNCH("lunch"),
+    SNACK("snack"),
+    DINNER("dinner");
+
+    companion object {
+        fun fromString(value: String?): MealType? =
+            entries.find { it.value == value?.lowercase()?.trim() }
+
+        /**
+         * Auto-detect the most likely meal type from the current hour.
+         * Matches webapp inferMealType() exactly.
+         */
+        fun inferFromCurrentTime(): MealType {
+            val hour = java.time.LocalTime.now().hour
+            return when {
+                hour in 6..10 -> BREAKFAST
+                hour in 11..13 -> LUNCH
+                hour in 14..16 -> SNACK
+                else -> DINNER
+            }
+        }
+    }
+}
+```
+
+### Step MA.2 — LogUiState: Add mealType Field
+
+**File:** `app/.../presentation/screens/log/LogViewModel.kt`
+
+Add to `LogUiState`:
+```kotlin
+data class LogUiState(
+    // ... existing fields ...
+    val mealType: MealType = MealType.inferFromCurrentTime(),
+    // ... rest ...
+)
+```
+
+Add to `LogViewModel`:
+```kotlin
+fun setMealType(type: MealType) {
+    _uiState.update { it.copy(mealType = type) }
+}
+```
+
+### Step MA.3 — LogFoodUseCase: Accept mealType Parameter
+
+**File:** `app/.../domain/usecase/LogFoodUseCase.kt`
+
+Add `mealType: String? = null` parameter to both `invoke()` and `logRecipe()`.
+Pass through to `DailyLog(... mealType = mealType ...)`.
+
+```kotlin
+// In invoke():
+val dailyLog = DailyLog(
+    // ... existing fields ...
+    mealType = mealType,       // ← NEW
+    isSynced = false,
+    lastModifiedAt = now
+)
+
+// In logRecipe():
+val dailyLog = DailyLog(
+    // ... existing fields ...
+    mealType = mealType,       // ← NEW
+    isSynced = false,
+    lastModifiedAt = now
+)
+```
+
+### Step MA.4 — LogViewModel.saveLog(): Pass mealType
+
+**File:** `app/.../presentation/screens/log/LogViewModel.kt`
+
+In `saveLog()`, pass `state.mealType.value` to `logFoodUseCase()`:
+```kotlin
+logFoodUseCase(
+    // ... existing params ...
+    existingFoodItemId = state.sourceCatalogFoodItemId,
+    mealType = state.mealType.value           // ← NEW
+)
+```
+
+Also in the "Log All" path for AI-parsed foods, pass `state.mealType.value`.
+
+### Step MA.5 — MealTypeSelector Composable
+
+**File:** `app/.../presentation/components/MealTypeSelector.kt` (NEW)
+
+```kotlin
+@Composable
+fun MealTypeSelector(
+    selected: MealType,
+    onSelect: (MealType) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    // Row of 4 selectable chips: Breakfast, Lunch, Snack, Dinner
+    // Each chip: emoji + label, filled when selected, outlined when not
+    // Matches webapp MealTypeSelector visual style
+}
+```
+
+### Step MA.6 — LogScreen: Insert MealTypeSelector
+
+**File:** `app/.../presentation/screens/log/LogScreen.kt`
+
+Add `MealTypeSelector` above the food name field in both AI and Manual input modes.
+Wire to `viewModel.setMealType(type)`.
+
+### Step MA.7 — HomeScreen: Grouped Meal Headers
+
+**File:** `app/.../presentation/screens/home/HomeScreen.kt`
+
+Replace the flat `items(dailyLogs)` block with grouped sections:
+
+```kotlin
+// Group logs by mealType
+val groupedLogs = uiState.dailyLogs.groupBy { MealType.fromString(it.mealType) }
+
+// Render sections in order: Breakfast → Lunch → Snack → Dinner
+val sectionOrder = listOf(
+    MealType.BREAKFAST to ("🌅" to "Breakfast"),
+    MealType.LUNCH to ("☀️" to "Lunch"),
+    MealType.SNACK to ("🍎" to "Snack"),
+    MealType.DINNER to ("🌙" to "Dinner"),
+)
+
+for ((type, labelPair) in sectionOrder) {
+    val logsInSection = groupedLogs[type] ?: continue
+    val (emoji, label) = labelPair
+    val sectionKcal = logsInSection.sumOf { it.totalCalories }.toInt()
+
+    // Section header
+    item {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(emoji)
+                Text(label.uppercase(), style = caption, fontWeight = SemiBold)
+            }
+            Text("$sectionKcal kcal", style = caption)
+        }
+    }
+
+    // Items in section
+    items(logsInSection, key = { it.id }) { log ->
+        FoodLogItem(log = log, ...)
+    }
+}
+
+// Handle logs with null mealType (legacy)
+val uncategorized = groupedLogs[null]
+if (uncategorized != null) {
+    item { /* "Other" section header */ }
+    items(uncategorized, key = { it.id }) { log -> FoodLogItem(...) }
+}
+```
+
+### Step MA.8 — HomeViewModel.EditLogSheet: Add mealType
+
+**File:** `app/.../presentation/screens/home/HomeViewModel.kt`
+
+The edit-log bottom sheet needs a MealTypeSelector. Add `editMealType: MealType?` to the edit state, pre-fill from the log being edited, and pass to the update mutation.
+
+---
+
+## Phase R2-Android: Android Recommendations (existing plan — unchanged)
+
+Steps 2.1 through 2.8 remain as documented above.
+
+**Implementation dependency:** Phase M-Android ✅ COMPLETED — all prerequisites satisfied:
+- `MealType.kt` enum exists with `inferFromCurrentTime()`, `fromString()`, emoji/label properties
+- `MealTypeSelector.kt` composable with 4 `FilterChip`s
+- `LogFoodUseCase` accepts `mealType` parameter
+- `LogViewModel` passes `mealType.value` in all save paths (saveLog, saveManualRecipe, acceptAndLogAllParsed)
+- `HomeScreen` groups logs by meal type with section headers + per-section kcal totals
+- `HomeViewModel.EditLogSheet` has `mealType` field + `updateEditMealType()` function
+- Room migration v8→v9 adds `meal_type TEXT` column to `daily_logs`
+
+---
+
+## Implementation Order (updated)
 
 ```
-3.1  recommendation.ts (types)        ← Web types
-3.2  constants.ts (edge fn name)      ← Web constant
-3.3  use-recommendations.ts           ← Web hook (with includeInternet from profile)
-3.4  recommendation-card.tsx          ← Web component (both sources)
-     + use-add-to-catalog.ts          ← "Add to My Foods" hook
-3.5  page.tsx (home integration)      ← Web wiring
-     ↓ (test in browser — verify catalog + internet recs)
-2.1  Recommendation.kt               ← Android domain model
-2.2  RecommendationRepository.kt      ← Android interface
-2.3  RecommendationRepositoryImpl.kt  ← Android implementation + DTOs
-2.4  GetTimeBasedRecsUseCase.kt       ← Android use case (reads includeInternet from profile)
-2.5  DI wiring                        ← Hilt module
-2.6  HomeViewModel.kt changes         ← Android state + addToMyFoods
-2.7  RecommendationCard.kt            ← Android composable (both sources)
-2.8  HomeScreen.kt changes            ← Android wiring
-```
+── WEBAPP (COMPLETED) ──────────────────────────────────
+✅ M1-M3  Meal type: UI selector, form store, Edge Functions
+✅ P1-P2  Recommendations: prefetch cache, dismiss buffer, meal-aware headers
+✅ Bugfix  Nested button, edit sheet scaling, grouped food log, acceptParsedFood catalog fallback
 
-Web before Android because the webapp is faster to iterate on (hot reload, no emulator boot), and the Edge Function (deployed in Feature 1) can be tested via the web UI immediately.
+── ANDROID (MEAL TYPES — COMPLETED) ───────────────────
+✅ MA.1  MealType.kt enum + inferFromCurrentTime()
+✅ MA.2  LogUiState: add mealType field
+✅ MA.3  LogFoodUseCase: accept mealType parameter
+✅ MA.4  LogViewModel.saveLog(): pass mealType
+✅ MA.5  MealTypeSelector composable (NEW)
+✅ MA.6  LogScreen: insert MealTypeSelector
+✅ MA.7  HomeScreen: grouped meal headers
+✅ MA.8  HomeViewModel.EditLogSheet: add mealType to edit flow
+
+── ANDROID RECOMMENDATIONS (NEXT) ─────────────────────
+2.1  Recommendation.kt domain model
+2.2  RecommendationRepository.kt interface
+2.3  RecommendationRepositoryImpl.kt + DTOs
+2.4  GetTimeBasedRecsUseCase.kt (reads includeInternet from profile)
+2.5  DI wiring (Hilt module)
+2.6  HomeViewModel.kt: recs state + addToMyFoods
+2.7  RecommendationCard.kt composable (both sources)
+2.8  HomeScreen.kt: insert RecommendationCard
+```
 
 ---
 
 ## Verification Checklist (Feature 2)
 
+### Android Meal Type (Phase M-Android) — ✅ ALL DONE
+- [x] MealType auto-inferred from device clock when Log screen opens
+- [x] User can change meal type via selector (4 chips)
+- [x] Selected meal type persisted to Room `daily_logs.meal_type`
+- [x] Meal type syncs to Supabase on push sync
+- [x] Meal type from webapp syncs to Android on pull sync
+- [x] Home screen shows grouped sections: 🌅 Breakfast → ☀️ Lunch → 🍎 Snack → 🌙 Dinner
+- [x] Each section header shows per-section kcal total
+- [x] Legacy logs (null mealType) appear in "Other" section
+- [x] Edit log sheet shows meal type selector, pre-filled from existing log
+- [x] Edit log saves updated mealType to Room + triggers sync
+
 ### Home Screen — Catalog Recommendations
-- [ ] Webapp: Recommendation card appears on Home below MacroSummaryCard (today only)
-- [ ] Webapp: Card shows shimmer during loading, error text on failure
-- [ ] Webapp: Navigating to yesterday → no recommendation card shown
-- [ ] Webapp: `timeOfDay` computed client-side (no hydration mismatch)
-- [ ] Webapp: 30-min staleTime prevents refetch on tab switch
+- [ ] Webapp: ✅ DONE — Recommendation card with prefetch caching, dismiss buffer, meal-aware headers
 - [ ] Android: Foreground sync fires before rec fetch
 - [ ] Android: Recs appear between MacroSummaryCard and Food Log
 - [ ] Android: Pull-to-refresh also refreshes recommendations

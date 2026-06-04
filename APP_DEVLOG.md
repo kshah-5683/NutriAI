@@ -29,6 +29,7 @@
 - [Phase 16: Manual Recipe Builder + Catalog Navigation Fix + Catalog Miss Bug](#phase-16-manual-recipe-builder--catalog-navigation-fix--catalog-miss-bug)
 - [Phase 17: Serving Size Clarification — Brand-Aware Nutrition Lookup](#phase-17-serving-size-clarification--brand-aware-nutrition-lookup)
 - [Phase 17.1: Clarification Robustness — Prompt Expansion & Brand Validation](#phase-171-clarification-robustness--prompt-expansion--brand-validation)
+- [Phase 18: Edit Log Macro Scaling Guard — Gram ↔ Non-Gram Boundary](#phase-18-edit-log-macro-scaling-guard--gram--non-gram-boundary)
 - [Architecture Decisions](#architecture-decisions)
 - [Known Issues & Tech Debt](#known-issues--tech-debt)
 
@@ -1671,6 +1672,8 @@ Goals set on webapp appeared on Android after pull. Goals set on Android appeare
 | 45 | ~~Cross-user Room data caused 403 RLS violation on food_items upsert~~ | ~~Critical~~ | W5 | ✅ Fixed | Room DB persisted across sign-out/sign-in. User A's food items (with catalog IDs prefixed by User A's UUID) remained in local Room when User B signed in. On next sync, those orphaned rows were pushed with User B's auth token — the UPDATE path of the Supabase upsert policy checked the existing row's `catalog_id` against User B's UUID prefix, found a mismatch, and rejected with `403 new row violates row-level security policy (USING expression)`. Daily logs referencing those food items then failed with `409 FK constraint`. Fix: (1) deleted orphaned rows from Supabase manually, (2) added `clearAll()` to all user-data DAOs (`UserDao`, `CatalogDao`, `FoodItemDao`, `DailyLogDao`) and (3) updated `AuthRepositoryImpl.signOut()` to wipe all user-specific Room tables in FK order (daily_logs → food_items → catalogs → users) on every sign-out. `ifct_foods` excluded — static seed data. Also cleared the `last_sync_at` cursor in `AuthPreferences.clearSession()` so the next sign-in always starts with a full pull. |
 | 46 | ~~EditLogSheet does not auto-recalculate macros when qty changes~~ | ~~High~~ | W5 | ✅ Fixed | Edit sheet treated qty and macro fields as independent text inputs. Changing qty from 1→2 left `total_*` unchanged — pushed stale 1-serving totals to Supabase. Webapp showed qty=2 but macros for qty=1. Fix: added `baseCalories/Protein/Carbs/Fat` (per-serving) to `EditLogSheet`, derived at pre-fill as `total / consumedQty`. `updateEditQty()` and `updateEditUnit()` now auto-recalculate totals as `base × newStoredQty`. User can still manually override after auto-calc. |
 | 47 | ~~User preferences push returns 400 — `updated_at: null` violates NOT NULL~~ | ~~High~~ | 14 | ✅ Fixed | `user_preferences.updated_at` is `TIMESTAMPTZ NOT NULL DEFAULT now()` (trigger-managed). With `explicitNulls = true`, the DTO serialized `"updated_at": null`, violating the constraint. Fix: separate `RemoteUserPreferencesPushDto` without `updated_at` for push; full `RemoteUserPreferencesDto` (with `updatedAt`) for pull. Server trigger manages the column automatically. |
+| 48 | Per-serving vs per-100g macro mismatch — cross-platform | Critical | 18 | 🔲 Planned | `food_items.base_calories` stores per-serving macros (e.g., 321 kcal for 200g) but `computeServingMultiplier()` and all downstream math assume per-100g. Causes wrong totals when editing logs across unit types (Scenario 2: 481 kcal instead of 241). Phase 18 guard is symptomatic. Architectural fix: normalize all `base_*` to per-100g at write time (`raw × 100/baseServingG`), update `computeServingMultiplier` to use `servingWeightG` for "serving" units, migrate existing data. Plan: `~/.wibey/plans/per100g_normalization_b0f402b8.plan.md`. |
+| 49 | Validation/save path mismatch in recipe mode (Scenario 1: 0 macros) | High | 18 | 🔲 Planned | When `isLoggingRecipe=true` but no ingredients added, `isValid` passes via flat check (calories field non-zero) but save calls `saveManualRecipe()` which aggregates 0 from empty ingredients list. Additionally `logRecipe()` stores raw gram quantity without `/100` conversion. To be fixed in per-100g normalization. |
 
 ---
 
@@ -1909,6 +1912,156 @@ if (brandMatches) {
 |---|----------|-----------|
 | 69 | Three-case ambiguity detection (A/B/C) over single-case | Case A alone missed two common scenarios: bare generic names ("cheese") and specific foods without amounts ("cheddar cheese"). Both produce meaningless default `1 serving` lookups. Case B+C catch these with weight-focused hints. |
 | 70 | Brand validation via result field matching, not query restructuring | FDC's keyword search cannot be constrained to an exact brand. Post-hoc validation (checking the returned `brand` field) is simple, reliable, and degrades gracefully to generic when the brand isn't in FDC. |
+
+---
+
+## Phase 18: Edit Log Macro Scaling Guard — Gram ↔ Non-Gram Boundary
+
+**Status:** ✅ Completed (symptomatic fix — architectural fix planned in per-100g normalization)
+**Date:** June 2, 2026
+
+### Summary
+
+Fixed incorrect macro recalculation when editing a daily log entry on the Home screen and changing between gram and non-gram unit types. Root cause: `startEditLog()` derives `baseCalories = totalCalories / storedQty`, which produces a per-100g-relative value for gram entries but a per-serving value for non-gram entries. When the user changes the unit type (e.g., from "1 serving" to "150g"), `fromDisplayQty(150, "g")` returns 1.5, and `321 × 1.5 = 481 kcal` — wrong (expected: 241 kcal for 150g of a 321 kcal per 200g item).
+
+**Symptomatic fix:** Skip auto-scaling entirely when the unit type crosses the gram ↔ non-gram boundary. The user must adjust macros manually after a unit-type change. This will be superseded by the per-100g macro normalization (planned), which will make all base macros per-100g and eliminate the mismatch.
+
+### Bug Reproduction (Scenario 2)
+
+1. Banana bread in recipe catalog: 321 kcal per 200g serving
+2. AI parse → Log All (logs as "1 serving", 321 kcal)
+3. Navigate to Home → edit entry → change to "150g"
+4. **Before fix:** 481 kcal (321 × fromDisplayQty(150, "g") = 321 × 1.5)
+5. **After fix:** Macros unchanged — user adjusts manually
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `presentation/screens/home/HomeViewModel.kt` | Updated | `updateEditQty()` (lines 266–293): Added gram↔non-gram guard — compares `UnitConverter.isGramsUnit(unit)` against `UnitConverter.isGramsUnit(originalUnit)` (from `sheet.log.consumedUnit`). When they differ, updates qty text but skips macro recalculation. |
+| 2 | `presentation/screens/home/HomeViewModel.kt` | Updated | `updateEditUnit()` (lines 305–327): Same guard — when new unit type differs from original log's unit type, updates unit field but skips macro recalculation. |
+
+### Key Implementation Details
+
+**Guard in `updateEditQty()`:**
+```kotlin
+val originalUnit = sheet.log.consumedUnit
+if (UnitConverter.isGramsUnit(unit) != UnitConverter.isGramsUnit(originalUnit)) {
+    _editSheet.value = sheet.copy(qty = value, errorMessage = null)
+    return
+}
+```
+
+**Why this is a symptomatic fix:**
+- The real issue is that `base_calories` on `FoodItem` is per-serving (e.g., 321 kcal for a 200g serving) but `computeServingMultiplier()` and `fromDisplayQty()` assume per-100g base
+- The guard prevents the wrong calculation from running, but doesn't fix the underlying data model
+- The planned per-100g normalization will store `base_calories = 321 × (100/200) = 160.5` and the formula `160.5 × 1.5 = 240.75 ≈ 241 kcal` will be correct, making this guard unnecessary
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| 77 | Skip auto-scaling on gram ↔ non-gram unit type change | Per-serving macros cannot be meaningfully converted to per-100g (or vice versa) without the serving weight, which the daily log does not carry. Skipping is safe — the user can still manually edit macro fields. This guard will be removed after per-100g normalization. |
+
+---
+
+## Feature 1: Internet Recommendations Infrastructure
+
+### Phase R4: User Profile Setup — Android
+
+**Status:** ✅ Completed
+**Date:** June 2, 2026
+
+### Summary
+
+Full user profile setup for AI-powered meal recommendations. Users can configure dietary preferences (diet type, cuisines, allergies, weight goal, age, gender, weight) which feed into the recommendation prompt when `includeInternet=true`. Profile is persisted in Room (merged into the existing `user_preferences` table) and synced to Supabase via the existing bidirectional sync pipeline.
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `domain/model/UserProfile.kt` | **New** | Domain model with 8 profile fields: `age`, `gender`, `weightKg`, `weightGoal`, `dietType`, `cuisinePreferences: List<String>`, `allergies: List<String>`, `recommendationsEnabled`. Computed `isComplete` property: `dietType != null && recommendationsEnabled`. |
+| 2 | `data/local/entity/UserPreferencesEntity.kt` | Updated | Added 8 nullable columns (`age`, `gender`, `weight_kg`, `weight_goal`, `diet_type`, `cuisine_preferences`, `allergies`, `recommendations_enabled`). Arrays stored as CSV strings in SQLite TEXT columns. Added `toUserProfile()` mapper splitting CSV → `List<String>`. |
+| 3 | `data/local/migrations/Migrations.kt` | Updated | Added `MIGRATION_7_8` — 8 `ALTER TABLE user_preferences ADD COLUMN` statements. SQLite types: `INTEGER` for age, `TEXT` for strings, `REAL` for weight_kg, `INTEGER NOT NULL DEFAULT 0` for recommendations_enabled. Updated `ALL` array. |
+| 4 | `data/local/NutriAiDatabase.kt` | Updated | Bumped `version = 7` → `version = 8`. Added v8 version history comment. |
+| 5 | `util/Constants.kt` | Updated | Bumped `DATABASE_VERSION = 7` → `DATABASE_VERSION = 8`. |
+| 6 | `data/local/preferences/UserPreferences.kt` | Updated | Added `profileFlow: Flow<UserProfile>` reading from Room. Added `saveProfile()` with read-before-write pattern to preserve macro goal columns. **Critical fix:** Changed `saveMacroGoals()` from creating a new entity (which wiped profile fields) to read-before-write with `.copy()` to preserve existing profile data. |
+| 7 | `data/remote/dto/SupabaseSyncDto.kt` | Updated | Extended `RemoteUserPreferencesDto` (pull) and `RemoteUserPreferencesPushDto` (push) with 8 profile fields. `List<String>` for cuisines/allergies (Supabase TEXT[] deserializes as `List`). Updated `toRemoteDto()` mapper: CSV → `split(",")` → `List<String>`. Updated `toEntity()` mapper: `List<String>` → `joinToString(",")` → CSV. |
+| 8 | `presentation/screens/auth/ProfileSetupSheet.kt` | **New** | Bottom sheet content composable with: enable toggle, age/weight text fields, gender/diet type dropdowns (`ExposedDropdownMenuBox`), weight goal `FilterChip` grid, cuisine/allergy multi-select `FilterChip` grids with custom text input. Reusable `DropdownField` helper. |
+| 9 | `presentation/screens/auth/AuthViewModel.kt` | Updated | Added `userProfile: StateFlow<UserProfile>` collected from `userPreferences.profileFlow`. Added `saveProfile(profile: UserProfile)` dispatching to `userPreferences.saveProfile()`. |
+| 10 | `presentation/screens/auth/AuthScreen.kt` | Updated | Added AI Recommendations `ElevatedCard` in `ProfilePanel` between Nutrition Goals and Sign Out. Card shows `AutoAwesome` icon, status text (Enabled/Set up), opens `ModalBottomSheet` with `ProfileSetupSheetContent`. Added `userProfile` parameter threading through `AuthContent` → `ProfilePanel`. |
+
+### Key Implementation Details
+
+**Room migration v7 → v8:**
+```kotlin
+val MIGRATION_7_8 = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE user_preferences ADD COLUMN age INTEGER")
+        db.execSQL("ALTER TABLE user_preferences ADD COLUMN gender TEXT")
+        db.execSQL("ALTER TABLE user_preferences ADD COLUMN weight_kg REAL")
+        db.execSQL("ALTER TABLE user_preferences ADD COLUMN weight_goal TEXT")
+        db.execSQL("ALTER TABLE user_preferences ADD COLUMN diet_type TEXT")
+        db.execSQL("ALTER TABLE user_preferences ADD COLUMN cuisine_preferences TEXT")
+        db.execSQL("ALTER TABLE user_preferences ADD COLUMN allergies TEXT")
+        db.execSQL("ALTER TABLE user_preferences ADD COLUMN recommendations_enabled INTEGER NOT NULL DEFAULT 0")
+    }
+}
+```
+
+**Read-before-write pattern (critical for dual-purpose table):**
+```kotlin
+suspend fun saveMacroGoals(goals: MacroGoals) {
+    val existing = userPreferencesDao.getPreferences(Constants.LOCAL_USER_ID)
+    val entity = (existing ?: UserPreferencesEntity(userId = Constants.LOCAL_USER_ID)).copy(
+        calorieGoal = goals.calorieGoal, proteinGoal = goals.proteinGoal,
+        carbsGoal = goals.carbsGoal, fatGoal = goals.fatGoal,
+        isSynced = false, lastModifiedAt = System.currentTimeMillis()
+    )
+    userPreferencesDao.upsertPreferences(entity)
+}
+```
+
+**Custom cuisine/allergy input with sanitization:**
+```kotlin
+private const val MAX_ENTRY_LENGTH = 40
+
+private fun sanitizeEntry(raw: String): String =
+    raw.replace(Regex("<[^>]*>"), "")
+        .replace(Regex("[#*_~`\\[\\]{}()|\\\\]"), "")
+        .replace(Regex("[\\x00-\\x1F\\x7F]"), "")
+        .trim()
+        .take(MAX_ENTRY_LENGTH)
+```
+
+### Prompt Injection Defense (3-Layer)
+
+Custom cuisine and allergy entries are user-provided free text that flows into the AI recommendation prompt. Three layers of sanitization prevent prompt injection:
+
+| Layer | Location | Function | Purpose |
+|-------|----------|----------|---------|
+| 1 (Authoritative) | `supabase/functions/recommend-meals/index.ts` | `sanitizeProfileEntry()` | Server-side — strips HTML, markdown, control chars, truncates to 40 chars. Applied when reading from Supabase before injecting into prompt. |
+| 2 | `webapp/app/settings/profile-section.tsx` | `sanitizeEntry()` + `maxLength={40}` | Webapp client — identical logic, pre-save. |
+| 3 | `ProfileSetupSheet.kt` | `sanitizeEntry()` + `MAX_ENTRY_LENGTH = 40` | Android client — identical logic, pre-save. |
+
+All three strip: HTML tags (`<[^>]*>`), markdown/special chars (`[#*_~`\[\]{}()|\\]`), control characters (`[\x00-\x1F\x7F]`), and truncate to 40 characters.
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| 71 | Profile columns merged into existing `user_preferences` table | Single-row-per-user table already exists for macro goals. Separate table would require a second sync entity, double the upsert logic, and complicate the read-before-write pattern. 8 nullable columns on the existing table keeps things simple. |
+| 72 | CSV string storage for arrays in Room | Room doesn't support `List<String>` columns natively. TypeConverters add annotation boilerplate. CSV with `split(",")` / `joinToString(",")` is transparent, searchable via `LIKE`, and maps cleanly to Supabase `TEXT[]` via the sync DTO layer. |
+| 73 | Read-before-write for both `saveMacroGoals()` and `saveProfile()` | The `user_preferences` entity serves dual purpose (macro goals + profile). Without read-before-write, saving goals would wipe profile fields and vice versa. Reading the existing entity and `.copy()`-ing only the changed fields preserves both sets of data. |
+| 74 | 3-layer sanitization for custom profile entries | Server-side sanitization is authoritative (defense in depth). Client-side sanitization provides immediate UX feedback and reduces round-trip waste. Identical logic on both clients prevents platform-specific injection vectors. |
+| 75 | Ephemeral `ModalBottomSheet` — no race condition | Unlike the webapp (which uses persistent React state that survives save/refetch cycles), Android's `ModalBottomSheet` state is destroyed on dismiss. When reopened, `rememberSaveable` re-initializes from the fresh `initialProfile` — no stale cache interleaving possible. |
+| 76 | `MAX_ENTRY_LENGTH = 40` for custom entries | No real cuisine or allergy name exceeds 40 characters. Truncation limits prompt token waste from malicious long inputs and is enforced at all three layers. |
+
+### Edge Function Deployment Required
+
+```bash
+supabase functions deploy recommend-meals  # sanitizeProfileEntry + profile-aware prompts
+```
 
 ---
 

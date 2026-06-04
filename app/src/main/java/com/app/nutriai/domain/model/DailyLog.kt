@@ -21,6 +21,8 @@ data class DailyLog(
     val totalProtein: Double,
     val totalCarbs: Double,
     val totalFat: Double,
+    /** Meal category: "breakfast", "snack", "lunch", "dinner". Null for legacy uncategorized entries. */
+    val mealType: String? = null,
     val isSynced: Boolean = false,
     val lastModifiedAt: Long,
     val deletedAt: Long? = null

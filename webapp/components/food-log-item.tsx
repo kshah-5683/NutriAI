@@ -45,9 +45,22 @@ export function FoodLogItem({ log, onEdit, onDelete }: FoodLogItemProps) {
         >
           {log.foodName}
         </p>
-        <p className="mt-0.5 text-xs" style={{ color: "var(--text-secondary)" }}>
-          {formatMacro(toDisplayQty(log.consumedQty, log.consumedUnit))} {log.consumedUnit}
-        </p>
+        <div className="mt-0.5 flex items-center gap-1.5">
+          <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
+            {formatMacro(toDisplayQty(log.consumedQty, log.consumedUnit))} {log.consumedUnit}
+          </p>
+          {log.mealType && (
+            <span
+              className="rounded-sm px-1.5 py-0.5 text-[10px] font-medium capitalize"
+              style={{
+                backgroundColor: "var(--bg-surface-variant)",
+                color: "var(--text-secondary)",
+              }}
+            >
+              {log.mealType}
+            </span>
+          )}
+        </div>
         <div className="mt-1.5 flex flex-wrap gap-1">
           <MacroChip value={log.totalCalories} label=" kcal" color={MACRO_COLORS.calories} />
           <MacroChip value={log.totalProtein} label="g P" color={MACRO_COLORS.protein} />

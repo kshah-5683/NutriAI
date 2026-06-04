@@ -91,7 +91,9 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.app.nutriai.domain.model.CatalogMatch
 import com.app.nutriai.domain.model.IngredientKey
+import com.app.nutriai.domain.model.MealType
 import com.app.nutriai.domain.model.ParsedFood
+import com.app.nutriai.presentation.components.MealTypeSelector
 import com.app.nutriai.presentation.components.NutritionMatchCard
 import com.app.nutriai.presentation.theme.CalorieColor
 import com.app.nutriai.presentation.theme.CarbsColor
@@ -305,6 +307,15 @@ fun LogScreen(
                             }
                         }
                     }
+                    // Meal type selector — shown when logging food (not adding to catalog)
+                    if (!isCatalogMode) {
+                        MealTypeSelector(
+                            selected = uiState.mealType,
+                            onSelect = viewModel::setMealType
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
+
                     ManualInputSection(
                         uiState = uiState,
                         saveButtonLabel = saveButtonLabel,

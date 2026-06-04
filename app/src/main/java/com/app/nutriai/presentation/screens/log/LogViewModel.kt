@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.app.nutriai.domain.model.CatalogMatch
 import com.app.nutriai.domain.model.FoodItem
 import com.app.nutriai.domain.model.IngredientKey
+import com.app.nutriai.domain.model.MealType
 import com.app.nutriai.domain.model.NutritionInfo
 import com.app.nutriai.domain.model.ParsedFood
 import com.app.nutriai.domain.repository.FoodRepository
@@ -192,6 +193,9 @@ data class LogUiState(
     val recipeServingUnit: String = "serving",
     val foodName: String = "",
     val brand: String = "",
+    // Serving weight in grams — set from catalog item by acceptParsedFood(), defaults to 100.
+    // Used by saveLog() to de-normalize per-100g form macros to per-serving for LogFoodUseCase.
+    val servingG: Double = Constants.PER_100G_BASE,
     val calories: String = "",
     val protein: String = "",
     val carbs: String = "",
@@ -199,6 +203,8 @@ data class LogUiState(
     val quantity: String = "1",
     val unit: String = "g",
     val isUnitDropdownExpanded: Boolean = false,
+    // -- Meal type (Phase M-Android) --
+    val mealType: MealType = MealType.inferFromCurrentTime(),
     val isSaving: Boolean = false,
     val errorMessage: String? = null
 ) {
@@ -304,6 +310,7 @@ class LogViewModel @Inject constructor(
     private val parseFoodWithAiUseCase: ParseFoodWithAiUseCase,
     private val resolveCatalogCacheUseCase: ResolveCatalogCacheUseCase,
     private val foodRepository: FoodRepository,
+    private val recommendationRepository: com.app.nutriai.domain.repository.RecommendationRepository,
     lookupNutritionUseCase: LookupNutritionUseCase,
     extractLabelUseCase: ExtractLabelUseCase,
     imageCompressor: ImageCompressor
@@ -314,6 +321,29 @@ class LogViewModel @Inject constructor(
 
     private val _events = MutableSharedFlow<LogEvent>()
     val events: SharedFlow<LogEvent> = _events.asSharedFlow()
+
+    // ─── Prefetch trigger (fire-and-forget after every successful log) ──
+
+    /**
+     * Triggers the `prefetch-recommendations` Edge Function to refresh the
+     * recommendation cache after a food log. Best-effort — errors are swallowed.
+     *
+     * Phase R2.1: Cache-first Android recommendations.
+     */
+    private fun triggerPrefetchInBackground() {
+        viewModelScope.launch {
+            try {
+                val startOfDayMs = java.time.LocalDate.now()
+                    .atStartOfDay(java.time.ZoneId.systemDefault())
+                    .toInstant()
+                    .toEpochMilli()
+                val currentHour = java.time.LocalTime.now().hour
+                recommendationRepository.triggerPrefetch(startOfDayMs, currentHour)
+            } catch (_: Exception) {
+                // Best-effort — never block the UI
+            }
+        }
+    }
 
     // ─── Delegates ──────────────────────────────────────────────────────
     private val labelScannerDelegate = LabelScannerDelegate(
@@ -666,6 +696,10 @@ class LogViewModel @Inject constructor(
                 foodName = targetFood.name,
                 quantity = targetFood.quantity.formatMacro(),
                 unit = targetFood.unit,
+                // Preserve catalog serving weight so saveLog() can de-normalize per-100g
+                // form macros to per-serving for LogFoodUseCase. Defaults to 100 when
+                // there's no catalog item (nutrition lookup or manual entry).
+                servingG = cachedFood?.baseServingG ?: Constants.PER_100G_BASE,
                 calories = resolvedCalories,
                 protein = resolvedProtein,
                 carbs = resolvedCarbs,
@@ -760,7 +794,8 @@ class LogViewModel @Inject constructor(
                             quantity = food.quantity,
                             unit = food.unit,
                             dateTimestamp = todayMillis,
-                            skipDailyLog = isCatalogOnly
+                            skipDailyLog = isCatalogOnly,
+                            mealType = state.mealType.value
                         )
                     } else {
                         // Flat item: determine macros from cache → nutrition → 0
@@ -771,68 +806,57 @@ class LogViewModel @Inject constructor(
                         val nutritionState = state.nutritionLookups[index]
                         val nutritionInfo = (nutritionState as? NutritionLookupState.Found)?.info
 
-                        // Storage strategy — aligned with saveLog() so consumedQty always
-                        // reflects the user's actual entered quantity ("2 tbsp", "1 cup"):
+                        // LogFoodUseCase now handles:
+                        //   1. Normalizing per-serving macros to per-100g
+                        //   2. Gram→multiplier conversion for storedQty
+                        //   3. computeServingMultiplier with servingG for daily log
                         //
-                        // • Catalog hit   → baseCalories is per-unit; raw qty as consumedQty
-                        // • FDC + grams   → per-100g base + qty÷100 multiplier as consumedQty
-                        //                   (same as saveLog() grams path)
-                        // • FDC + non-gram→ per-UNIT base (per100g × 1-unit multiplier)
-                        //                   + raw qty as consumedQty
-                        //                   → "2 tbsp" stored as consumedQty=2, not 0.3
-                        //
-                        // Total calories are identical either way: (A × k) × (B ÷ k) = A × B.
-                        // Benefit: HomeScreen displays "2 tbsp" not "0.3 tbsp"; edit UX is natural.
-                        val isGramsUnit = UnitConverter.isGramsUnit(food.unit)
-
+                        // All callers pass RAW quantities and PER-SERVING macros.
+                        // The use case does the rest.
                         val logCalories: Double
                         val logProtein: Double
                         val logCarbs: Double
                         val logFat: Double
-                        val effectiveQty: Double
+                        val logServingG: Double
 
                         when {
                             isFromCatalog -> {
-                                // Catalog hit: baseCalories is per-100g for gram units,
-                                // per-unit for all other units.
-                                // For grams: store the multiplier (qty÷100) so that
-                                //   totalCalories = baseCalories × consumedQty is correct,
-                                //   and toDisplayQty recovers the original grams value.
-                                // For non-gram: raw qty is already the natural unit count.
-                                effectiveQty = if (isGramsUnit)
-                                    UnitConverter.computeServingMultiplier(food.quantity, food.unit)
-                                else
-                                    food.quantity
-                                logCalories  = cachedFood?.baseCalories ?: 0.0
-                                logProtein   = cachedFood?.baseProtein  ?: 0.0
-                                logCarbs     = cachedFood?.baseCarbs    ?: 0.0
-                                logFat       = cachedFood?.baseFat      ?: 0.0
+                                // Catalog hit: baseCalories is per-100g (after migration).
+                                // De-normalize to per-serving for the use case contract.
+                                val scale = (cachedFood?.baseServingG ?: Constants.PER_100G_BASE) / Constants.PER_100G_BASE
+                                logCalories  = (cachedFood?.baseCalories ?: 0.0) * scale
+                                logProtein   = (cachedFood?.baseProtein  ?: 0.0) * scale
+                                logCarbs     = (cachedFood?.baseCarbs    ?: 0.0) * scale
+                                logFat       = (cachedFood?.baseFat      ?: 0.0) * scale
+                                logServingG  = cachedFood?.baseServingG ?: Constants.PER_100G_BASE
                             }
-                            nutritionInfo != null && isGramsUnit -> {
-                                // Grams + FDC: per-100g base + qty/100 multiplier
-                                effectiveQty = UnitConverter.computeServingMultiplier(food.quantity, food.unit)
+                            nutritionInfo != null && UnitConverter.isGramsUnit(food.unit) -> {
+                                // Grams + FDC: per-100g base. servingG=100 so normFactor=1.0
                                 logCalories  = nutritionInfo.caloriesPer100g
                                 logProtein   = nutritionInfo.proteinPer100g
                                 logCarbs     = nutritionInfo.carbsPer100g
                                 logFat       = nutritionInfo.fatPer100g
+                                logServingG  = Constants.PER_100G_BASE
                             }
                             nutritionInfo != null -> {
-                                // Non-gram + FDC: per-unit base + raw qty
+                                // Non-gram + FDC: per-unit base (per100g × 1-unit multiplier).
+                                // servingG=100 so normFactor=1.0 — these are effectively "per serving"
+                                // where 1 serving ≈ 1 unit.
                                 val perUnitMult = UnitConverter.computeServingMultiplier(
                                     1.0, food.unit, nutritionInfo.servingWeightG
                                 )
-                                effectiveQty = food.quantity
                                 logCalories  = nutritionInfo.caloriesPer100g * perUnitMult
                                 logProtein   = nutritionInfo.proteinPer100g  * perUnitMult
                                 logCarbs     = nutritionInfo.carbsPer100g    * perUnitMult
                                 logFat       = nutritionInfo.fatPer100g      * perUnitMult
+                                logServingG  = Constants.PER_100G_BASE
                             }
                             else -> {
-                                effectiveQty = food.quantity
                                 logCalories  = 0.0
                                 logProtein   = 0.0
                                 logCarbs     = 0.0
                                 logFat       = 0.0
+                                logServingG  = Constants.PER_100G_BASE
                             }
                         }
 
@@ -847,25 +871,27 @@ class LogViewModel @Inject constructor(
                         logFoodUseCase(
                             foodName = food.name,
                             brand = if (isFromCatalog) cachedFood?.brand else nutritionInfo?.brand,
-                            servingG = cachedFood?.baseServingG ?: Constants.PER_100G_BASE,
+                            servingG = logServingG,
                             calories = logCalories,
                             protein  = logProtein,
                             carbs    = logCarbs,
                             fat      = logFat,
-                            quantity = effectiveQty,
+                            quantity = food.quantity,  // raw — use case handles gram conversion
                             unit = food.unit,
                             dateTimestamp = todayMillis,
                             catalogId = flatCatalogId,
                             skipDailyLog = isCatalogOnly,
                             externalApiId = if (isFromCatalog) null else nutritionInfo?.externalId,
                             // Reuse the existing FoodItem ID for catalog hits to prevent duplicates.
-                            existingFoodItemId = if (isFromCatalog) cachedFood?.id else null
+                            existingFoodItemId = if (isFromCatalog) cachedFood?.id else null,
+                            mealType = state.mealType.value
                         )
                     }
                 }
 
                 val catalogType = _uiState.value.catalogType
                 _uiState.update { LogUiState(catalogType = catalogType) }
+                triggerPrefetchInBackground()
                 _events.emit(LogEvent.SaveSuccess)
             } catch (e: Exception) {
                 _uiState.update {
@@ -942,6 +968,12 @@ class LogViewModel @Inject constructor(
         }
     }
 
+    // -- Meal type (Phase M-Android) --
+
+    fun setMealType(type: MealType) {
+        _uiState.update { it.copy(mealType = type) }
+    }
+
     // -- Manual form methods (Phase 3 — preserved) --
 
     fun updateFoodName(name: String) {
@@ -949,8 +981,10 @@ class LogViewModel @Inject constructor(
             it.copy(
                 foodName = name,
                 // If the user edits the food name, they're creating a custom item.
-                // Clear the catalog link so we don't update an existing catalog entry.
+                // Clear the catalog link and reset servingG so we don't carry over
+                // the catalog item's serving weight to a new custom item.
                 sourceCatalogFoodItemId = null,
+                servingG = Constants.PER_100G_BASE,
                 // NOTE: isLoggingRecipe is intentionally NOT cleared here.
                 // Previously this reset it to false, but that broke the manual recipe builder:
                 // typing the recipe name collapsed the ingredient list on every keystroke.
@@ -1026,30 +1060,37 @@ class LogViewModel @Inject constructor(
                     ?: if (state.isLoggingRecipe) Constants.RECIPE_CATALOG_ID
                     else Constants.INGREDIENT_CATALOG_ID
 
-                // For grams: macros are per 100g, so 1 "serving" = 100g.
-                // Normalise quantity to servings so LogFoodUseCase.totalCalories = calories × qty
-                // gives the right daily total (e.g. 200g → effectiveQty = 2.0).
+                // LogFoodUseCase normalizes macros to per-100g and handles
+                // gram→multiplier conversion internally. Pass raw quantity.
                 val rawQty = state.quantity.toDouble()
-                val effectiveQty = if (UnitConverter.isGramsUnit(state.unit)) rawQty / Constants.PER_100G_BASE else rawQty
+
+                // Form macros are per-100g. LogFoodUseCase expects per-serving.
+                // De-normalize: perServing = per100g × (servingG / 100).
+                // servingG is set from catalog item by acceptParsedFood(); defaults to 100
+                // for manual entry (deNorm = 1.0 — no change).
+                val actualServingG = state.servingG
+                val deNorm = actualServingG / Constants.PER_100G_BASE
 
                 logFoodUseCase(
                     foodName = state.foodName,
                     brand = state.brand.ifBlank { null },
-                    servingG = Constants.PER_100G_BASE,
-                    calories = state.calories.toDouble(),
-                    protein = state.protein.toDoubleOrNull() ?: 0.0,
-                    carbs = state.carbs.toDoubleOrNull() ?: 0.0,
-                    fat = state.fat.toDoubleOrNull() ?: 0.0,
-                    quantity = effectiveQty,
+                    servingG = actualServingG,
+                    calories = state.calories.toDouble() * deNorm,
+                    protein = (state.protein.toDoubleOrNull() ?: 0.0) * deNorm,
+                    carbs = (state.carbs.toDoubleOrNull() ?: 0.0) * deNorm,
+                    fat = (state.fat.toDoubleOrNull() ?: 0.0) * deNorm,
+                    quantity = rawQty,
                     unit = state.unit,
                     dateTimestamp = todayMillis,
                     catalogId = targetCatalogId,
                     skipDailyLog = state.catalogType != null,
                     // Reuse the existing catalog FoodItem ID if this form was populated
                     // from a catalog hit — prevents inserting a duplicate FoodItem.
-                    existingFoodItemId = state.sourceCatalogFoodItemId
+                    existingFoodItemId = state.sourceCatalogFoodItemId,
+                    mealType = state.mealType.value
                 )
                 _uiState.update { LogUiState(catalogType = state.catalogType) }
+                triggerPrefetchInBackground()
                 _events.emit(LogEvent.SaveSuccess)
             } catch (e: Exception) {
                 _uiState.update {
@@ -1215,6 +1256,15 @@ class LogViewModel @Inject constructor(
             return
         }
 
+        // If isLoggingRecipe is set but no ingredients have been added,
+        // the user filled in flat macros — fall back to saveLog() which
+        // handles flat items correctly (Scenario 1 fix).
+        val hasBuilderIngredients = state.manualRecipeIngredients.any { it.hasName }
+        if (!hasBuilderIngredients) {
+            saveLog()
+            return
+        }
+
         viewModelScope.launch {
             _uiState.update { it.copy(isSaving = true, errorMessage = null) }
             try {
@@ -1271,10 +1321,12 @@ class LogViewModel @Inject constructor(
                     quantity = recipeQty,
                     unit = state.recipeServingUnit,
                     dateTimestamp = todayMillis,
-                    skipDailyLog = state.catalogType != null
+                    skipDailyLog = state.catalogType != null,
+                    mealType = state.mealType.value
                 )
 
                 _uiState.update { LogUiState(catalogType = state.catalogType) }
+                triggerPrefetchInBackground()
                 _events.emit(LogEvent.SaveSuccess)
             } catch (e: Exception) {
                 _uiState.update {

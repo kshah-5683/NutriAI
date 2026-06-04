@@ -20,6 +20,7 @@ fun DailyLogEntity.toDomain(): DailyLog = DailyLog(
     totalProtein = totalProtein,
     totalCarbs = totalCarbs,
     totalFat = totalFat,
+    mealType = mealType,
     isSynced = isSynced,
     lastModifiedAt = lastModifiedAt,
     deletedAt = deletedAt
@@ -62,6 +63,7 @@ fun DailyLogWithFood.toDomain(): DailyLog {
         totalProtein  = if (food != null) food.baseProtein  * log.consumedQty else log.totalProtein,
         totalCarbs    = if (food != null) food.baseCarbs    * log.consumedQty else log.totalCarbs,
         totalFat      = if (food != null) food.baseFat      * log.consumedQty else log.totalFat,
+        mealType      = log.mealType,
         isSynced      = log.isSynced,
         lastModifiedAt = log.lastModifiedAt,
         deletedAt     = log.deletedAt
@@ -80,6 +82,7 @@ fun DailyLog.toEntity(): DailyLogEntity = DailyLogEntity(
     totalProtein = totalProtein,
     totalCarbs = totalCarbs,
     totalFat = totalFat,
+    mealType = mealType,
     isSynced = isSynced,
     lastModifiedAt = lastModifiedAt,
     deletedAt = deletedAt

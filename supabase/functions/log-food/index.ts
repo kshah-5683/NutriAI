@@ -2,14 +2,16 @@
  * log-food Edge Function — Canonical macro scaling + catalog auto-creation.
  * Port of LogFoodUseCase.invoke().
  *
- * CRITICAL: All base macros are per 100g.
- *   scaleFactor = computeServingMultiplier(quantity, unit)
- *   total = base_macro_per_100g * scaleFactor
+ * CRITICAL: Incoming macros are per-serving. This function normalizes to per-100g
+ * before storing in food_items:
+ *   normMacro = rawMacro × (100 / servingG)
+ *   scaleFactor = computeServingMultiplier(quantity, unit, servingG)
+ *   total = normMacro * scaleFactor
  */
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
-import { computeServingMultiplier } from "../_shared/macro-calculator.ts";
+import { computeServingMultiplier, isGramUnit, PER_100G_BASE } from "../_shared/macro-calculator.ts";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return handleCors();
@@ -30,6 +32,7 @@ serve(async (req) => {
       externalApiId,
       existingFoodItemId,
       skipDailyLog,
+      mealType,
     } = await req.json();
 
     // Validation
@@ -109,6 +112,15 @@ serve(async (req) => {
       }
     }
 
+    // ── Normalize macros to per-100g ──────────────────────────────
+    // Incoming macros are per-serving. Normalize before storing in food_items.
+    // e.g. 321 kcal per 200g serving → 160.5 kcal per 100g
+    const normFactor = PER_100G_BASE / servingG;
+    const normCalories = calories * normFactor;
+    const normProtein  = protein  * normFactor;
+    const normCarbs    = carbs    * normFactor;
+    const normFat      = fat      * normFactor;
+
     let foodItemId: string;
 
     // Check for existing catalog item (reuse, don't duplicate)
@@ -132,10 +144,10 @@ serve(async (req) => {
           foodName,
           brand,
           servingG,
-          calories,
-          protein,
-          carbs,
-          fat,
+          calories: normCalories,
+          protein: normProtein,
+          carbs: normCarbs,
+          fat: normFat,
           externalApiId,
           now,
         });
@@ -149,26 +161,25 @@ serve(async (req) => {
         foodName,
         brand,
         servingG,
-        calories,
-        protein,
-        carbs,
-        fat,
+        calories: normCalories,
+        protein: normProtein,
+        carbs: normCarbs,
+        fat: normFat,
         externalApiId,
         now,
       });
     }
 
     if (!skipDailyLog) {
-      // CRITICAL: All base macros are per 100g.
       // computeServingMultiplier converts quantity+unit into a 100g-relative multiplier.
-      // e.g., "200g" → 2.0, "2 cups" → 4.8, "1 tbsp" → 0.15, "2 servings" → 2.0
+      // With servingG: "1 serving" of a 200g item → (1 × 200) / 100 = 2.0
+      // Without: "200g" → 2.0, "2 cups" → 4.8, "1 tbsp" → 0.15
       const normalizedUnit = (unit?.trim() || "serving").toLowerCase();
-      const scaleFactor = computeServingMultiplier(quantity, normalizedUnit);
+      const scaleFactor = computeServingMultiplier(quantity, normalizedUnit, servingG);
 
-      // Android parity: consumed_qty for gram/ml units is stored as a multiplier
+      // consumed_qty for gram/ml units is stored as a multiplier
       // (200g → 2.0) so that toDisplayQty(2.0, "g") = 200 on all clients.
-      const isGramUnit = ["g", "gram", "grams", "ml", "milliliter"].includes(normalizedUnit);
-      const storedQty = isGramUnit ? quantity / 100 : quantity;
+      const storedQty = isGramUnit(normalizedUnit) ? quantity / PER_100G_BASE : quantity;
 
       const { error: logError } = await supabase.from("daily_logs").insert({
         id: crypto.randomUUID(),
@@ -178,10 +189,11 @@ serve(async (req) => {
         date_timestamp: dateTimestamp,
         consumed_qty: storedQty,
         consumed_unit: unit?.trim() || "serving",
-        total_calories: calories * scaleFactor,
-        total_protein: protein * scaleFactor,
-        total_carbs: carbs * scaleFactor,
-        total_fat: fat * scaleFactor,
+        total_calories: normCalories * scaleFactor,
+        total_protein: normProtein * scaleFactor,
+        total_carbs: normCarbs * scaleFactor,
+        total_fat: normFat * scaleFactor,
+        meal_type: mealType ?? null,
         last_modified_at: now,
         is_synced: true,
         deleted_at: null,

@@ -7,6 +7,7 @@ import com.app.nutriai.domain.repository.CatalogRepository
 import com.app.nutriai.domain.repository.DailyLogRepository
 import com.app.nutriai.domain.repository.FoodRepository
 import com.app.nutriai.util.Constants
+import com.app.nutriai.util.UnitConverter
 import java.util.UUID
 import javax.inject.Inject
 
@@ -33,13 +34,18 @@ class LogFoodUseCase @Inject constructor(
     /**
      * Log a single food item (ingredient) to the Ingredients catalog.
      *
+     * CRITICAL: Incoming macros (calories, protein, carbs, fat) are per-serving values.
+     * This method normalizes them to per-100g before storing in [FoodItem]:
+     *   `normalizedMacro = rawMacro × (100 / servingG)`
+     * [FoodItem.baseServingG] is preserved unchanged for display/denormalization.
+     *
      * @param foodName display name for the food (e.g., "Oatmeal with honey")
      * @param brand optional brand name (sourced from nutrition database in Phase 5)
-     * @param servingG serving size in grams
-     * @param calories total calories for the serving
-     * @param protein grams of protein for the serving
-     * @param carbs grams of carbohydrates for the serving
-     * @param fat grams of fat for the serving
+     * @param servingG serving size in grams (used for normalization; stored unchanged)
+     * @param calories total calories for the serving (will be normalized to per-100g)
+     * @param protein grams of protein for the serving (will be normalized to per-100g)
+     * @param carbs grams of carbohydrates for the serving (will be normalized to per-100g)
+     * @param fat grams of fat for the serving (will be normalized to per-100g)
      * @param quantity number of servings consumed
      * @param unit unit label (e.g., "serving", "bowl", "piece")
      * @param dateTimestamp epoch millis for the log date
@@ -69,13 +75,23 @@ class LogFoodUseCase @Inject constructor(
         catalogId: String = Constants.INGREDIENT_CATALOG_ID,
         skipDailyLog: Boolean = false,
         externalApiId: String? = null,
-        existingFoodItemId: String? = null
+        existingFoodItemId: String? = null,
+        mealType: String? = null
     ) {
         require(foodName.isNotBlank()) { "Food name cannot be blank" }
         require(quantity > 0) { "Quantity must be greater than zero" }
         require(servingG > 0) { "Serving size must be greater than zero" }
 
         val now = System.currentTimeMillis()
+
+        // ── Normalize macros to per-100g ──────────────────────────────
+        // Incoming macros are per-serving. Normalize to per-100g for consistent storage.
+        // e.g. 321 kcal per 200g serving → 160.5 kcal per 100g
+        val normFactor = Constants.PER_100G_BASE / servingG
+        val normCalories = calories * normFactor
+        val normProtein  = protein  * normFactor
+        val normCarbs    = carbs    * normFactor
+        val normFat      = fat      * normFactor
 
         val foodItemId: String
         // Verify the existing food item still exists in the DB before reusing its ID.
@@ -98,10 +114,10 @@ class LogFoodUseCase @Inject constructor(
                 name = foodName.trim(),
                 brand = brand?.trim()?.ifBlank { null },
                 baseServingG = servingG,
-                baseCalories = calories,
-                baseProtein = protein,
-                baseCarbs = carbs,
-                baseFat = fat,
+                baseCalories = normCalories,
+                baseProtein = normProtein,
+                baseCarbs = normCarbs,
+                baseFat = normFat,
                 externalApiId = externalApiId,
                 lastModifiedAt = now
             )
@@ -110,19 +126,28 @@ class LogFoodUseCase @Inject constructor(
 
         // Create the daily log with computed macro totals (skip when adding to catalog only)
         if (!skipDailyLog) {
-            val scaleFactor = quantity // each "quantity" = 1 serving
+            // computeServingMultiplier uses servingG so "1 serving" of a 200g item → 2.0
+            val normalizedUnit = unit.trim().ifBlank { "serving" }
+            val scaleFactor = UnitConverter.computeServingMultiplier(quantity, normalizedUnit, servingG)
+
+            // For gram/ml units: store as 100g-relative multiplier (200g → 2.0)
+            // For serving/piece/etc: store raw quantity
+            val storedQty = if (UnitConverter.isGramsUnit(normalizedUnit))
+                quantity / Constants.PER_100G_BASE else quantity
+
             val dailyLog = DailyLog(
                 id = UUID.randomUUID().toString(),
                 userId = Constants.LOCAL_USER_ID,
                 foodItemId = foodItemId,
                 foodName = foodName.trim(),
                 dateTimestamp = dateTimestamp,
-                consumedQty = quantity,
-                consumedUnit = unit.trim().ifBlank { "serving" },
-                totalCalories = calories * scaleFactor,
-                totalProtein = protein * scaleFactor,
-                totalCarbs = carbs * scaleFactor,
-                totalFat = fat * scaleFactor,
+                consumedQty = storedQty,
+                consumedUnit = normalizedUnit,
+                totalCalories = normCalories * scaleFactor,
+                totalProtein = normProtein * scaleFactor,
+                totalCarbs = normCarbs * scaleFactor,
+                totalFat = normFat * scaleFactor,
+                mealType = mealType,
                 isSynced = false,
                 lastModifiedAt = now
             )
@@ -157,7 +182,8 @@ class LogFoodUseCase @Inject constructor(
         quantity: Double,
         unit: String,
         dateTimestamp: Long,
-        skipDailyLog: Boolean = false
+        skipDailyLog: Boolean = false,
+        mealType: String? = null
     ) {
         require(recipeName.isNotBlank()) { "Recipe name cannot be blank" }
         require(quantity > 0) { "Quantity must be greater than zero" }
@@ -222,35 +248,50 @@ class LogFoodUseCase @Inject constructor(
         }
 
         // Create the recipe FoodItem in the Recipes catalog with aggregated macros
+        // Normalize aggregated totals to per-100g before storing.
+        val recipeServingG = if (totalServingG > 0) totalServingG else Constants.PER_100G_BASE
+        val normFactor = Constants.PER_100G_BASE / recipeServingG
+        val normCalories = totalCalories * normFactor
+        val normProtein  = totalProtein  * normFactor
+        val normCarbs    = totalCarbs    * normFactor
+        val normFat      = totalFat      * normFactor
+
         val recipeItemId = UUID.randomUUID().toString()
         val recipeFoodItem = FoodItem(
             id = recipeItemId,
             catalogId = recipeCatalogId,
             name = recipeName.trim(),
-            baseServingG = if (totalServingG > 0) totalServingG else Constants.PER_100G_BASE,
-            baseCalories = totalCalories,
-            baseProtein = totalProtein,
-            baseCarbs = totalCarbs,
-            baseFat = totalFat,
+            baseServingG = recipeServingG,
+            baseCalories = normCalories,
+            baseProtein = normProtein,
+            baseCarbs = normCarbs,
+            baseFat = normFat,
             lastModifiedAt = now
         )
         foodRepository.insertFood(recipeFoodItem)
 
         // Create the daily log entry for the recipe (skip when adding to catalog only)
         if (!skipDailyLog) {
-            val scaleFactor = quantity
+            val normalizedUnit = unit.trim().ifBlank { "serving" }
+            val scaleFactor = UnitConverter.computeServingMultiplier(quantity, normalizedUnit, recipeServingG)
+
+            // For gram/ml units: store as 100g-relative multiplier (200g → 2.0)
+            val storedQty = if (UnitConverter.isGramsUnit(normalizedUnit))
+                quantity / Constants.PER_100G_BASE else quantity
+
             val dailyLog = DailyLog(
                 id = UUID.randomUUID().toString(),
                 userId = Constants.LOCAL_USER_ID,
                 foodItemId = recipeItemId,
                 foodName = recipeName.trim(),
                 dateTimestamp = dateTimestamp,
-                consumedQty = quantity,
-                consumedUnit = unit.trim().ifBlank { "serving" },
-                totalCalories = totalCalories * scaleFactor,
-                totalProtein = totalProtein * scaleFactor,
-                totalCarbs = totalCarbs * scaleFactor,
-                totalFat = totalFat * scaleFactor,
+                consumedQty = storedQty,
+                consumedUnit = normalizedUnit,
+                totalCalories = normCalories * scaleFactor,
+                totalProtein = normProtein * scaleFactor,
+                totalCarbs = normCarbs * scaleFactor,
+                totalFat = normFat * scaleFactor,
+                mealType = mealType,
                 isSynced = false,
                 lastModifiedAt = now
             )

@@ -32,5 +32,27 @@ data class ParsedFood(
     val isRecipe: Boolean = false,
     val ingredients: List<ParsedFood> = emptyList(),
     val needsClarification: Boolean = false,
-    val clarificationHint: String? = null
+    val clarificationHint: String? = null,
+    /**
+     * Pre-resolved catalog match from the Edge Function.
+     *
+     * When non-null, the Edge Function already resolved this food against the user's
+     * Supabase catalog — [ResolveCatalogCacheUseCase] can skip local Room lookup for
+     * this item. Null means the item needs local resolution (fallback for unsynced data).
+     */
+    val edgeCatalogMatch: EdgeCatalogMatch? = null
+)
+
+/**
+ * Lightweight catalog match data embedded in [ParsedFood] by the Edge Function.
+ *
+ * Separate from [CatalogMatch] which wraps the full parsedFood + matchedFoodItem
+ * pair for the ViewModel layer. This only carries the server-side resolution result.
+ *
+ * @property isFromCatalog True when the Edge Function found this food in the user's catalog
+ * @property foodItem The matched food_items row with macros; null if not found
+ */
+data class EdgeCatalogMatch(
+    val isFromCatalog: Boolean,
+    val foodItem: FoodItem? = null
 )

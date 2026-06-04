@@ -3,7 +3,7 @@
  * Ports of Android AI domain models + Edge Function response shapes.
  */
 
-import type { FoodItem } from "./domain";
+import type { FoodItem, MealType } from "./domain";
 
 /**
  * A food item parsed from natural language by the AI (parse-food Edge Function).
@@ -130,6 +130,8 @@ export interface LogFoodRequest {
   skipDailyLog?: boolean;
   /** Brand name (optional) — stored on the food_items row */
   brand?: string;
+  /** Meal category: breakfast, snack, lunch, or dinner */
+  mealType?: MealType;
 }
 
 /**
@@ -149,4 +151,6 @@ export interface LogRecipeRequest {
   unit: string;
   dateTimestamp: number;
   skipDailyLog?: boolean;
+  /** Meal category: breakfast, snack, lunch, or dinner */
+  mealType?: MealType;
 }

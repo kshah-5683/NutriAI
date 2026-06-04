@@ -9,6 +9,7 @@ import com.app.nutriai.BuildConfig
 import com.app.nutriai.data.local.preferences.AuthPreferences
 import com.app.nutriai.data.remote.api.SupabaseAuthApiService
 import com.app.nutriai.data.remote.api.SupabaseDbApiService
+import com.app.nutriai.data.remote.api.SupabaseEdgeFunctionService
 import com.app.nutriai.data.remote.auth.SupabaseAuthenticator
 import com.app.nutriai.util.Constants
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
@@ -175,6 +176,17 @@ object SupabaseModule {
     fun provideSupabaseDbApiService(
         @Named("supabase") retrofit: Retrofit
     ): SupabaseDbApiService = retrofit.create(SupabaseDbApiService::class.java)
+
+    /**
+     * Phase R2: Edge Function service for AI recommendations.
+     * Reuses the same `@Named("supabase")` Retrofit instance (same base URL, auth headers).
+     * Edge Functions live at `/functions/v1/{name}` — same Supabase project URL.
+     */
+    @Provides
+    @Singleton
+    fun provideSupabaseEdgeFunctionService(
+        @Named("supabase") retrofit: Retrofit
+    ): SupabaseEdgeFunctionService = retrofit.create(SupabaseEdgeFunctionService::class.java)
 
     // ─── WorkManager ─────────────────────────────────────────────────────
 

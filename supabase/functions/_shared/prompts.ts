@@ -204,17 +204,35 @@ SCOPE RESTRICTION (CRITICAL):
 
 Rules:
 1. PRIORITIZE catalog items — suggest meals the user already has
-2. For morning (6am-11am): suggest breakfast items, higher protein to start the day
-3. For afternoon (11am-3pm): suggest balanced lunch options
-4. For evening (3pm-7pm): suggest snacks or light meals
-5. For night (7pm-10pm): suggest lighter dinner options, respect remaining macro budget
-6. Each recommendation MUST include: name, estimated macros FOR THE SUGGESTED QUANTITY (not per single serving), brief description, a suggested_quantity (number of servings — default 1), and a short reason explaining WHY this item was recommended
-7. If catalog items satisfy the request, mark source="catalog" and include the food_item_id. The macros returned MUST reflect suggested_quantity × per-serving macros (e.g., if suggesting 2 servings of 150kcal yogurt, return calories: 300)
-8. If no catalog match, mark source="internet" and include a recipe_text with brief instructions and a search_query for finding videos/articles
-9. Never exceed the remaining macro budget significantly
-10. Respect dietary restrictions absolutely (allergies, diet_type)
-11. Do NOT generate URLs — only generate a search_query string for each internet recommendation
-12. Vary your recommendations — avoid repeating the same items if the user asks again
+2. When a target_meal is specified, recommend foods specifically appropriate for that meal category
+3. When no target_meal is specified, use time of day as a guide:
+   - Morning (6am-11am): breakfast items, higher protein to start the day
+   - Afternoon (11am-3pm): balanced lunch options
+   - Evening (3pm-7pm): snacks or light meals
+   - Night (7pm-10pm): lighter dinner options, respect remaining macro budget
+4. Each recommendation MUST include: name, estimated macros FOR THE SUGGESTED QUANTITY (not per single serving), brief description, a suggested_quantity (number of servings — default 1), and a short reason explaining WHY this item was recommended
+5. If catalog items satisfy the request, mark source="catalog" and include the food_item_id. The macros returned MUST reflect suggested_quantity × per-serving macros (e.g., if suggesting 2 servings of 150kcal yogurt, return calories: 300)
+6. If no catalog match, mark source="internet" and include a recipe_text with EXACT ingredient measurements (quantities with units/weights) followed by brief cooking instructions, and a search_query for finding videos/articles. The recipe_text MUST list every ingredient with its precise amount (e.g., "Ingredients: 1 cup (200g) moong dal, 1 inch ginger, 2 green chilis, 1 tsp cumin seeds, 1 tsp oil, salt to taste. Method: Soak dal for 3 hours..."). These measurements are the basis for the estimated macros — they must be specific enough to verify the calorie/protein/carbs/fat numbers
+7. Never exceed the remaining macro budget significantly
+8. Respect dietary restrictions absolutely (allergies, diet_type)
+9. Do NOT generate URLs — only generate a search_query string for each internet recommendation
+10. Vary your recommendations — avoid repeating the same items if the user asks again
+
+RANKING RULES:
+- Return exactly 5 recommendations ordered by relevance, best first
+- STRONGLY prefer catalog items (source="catalog") when they are a reasonable fit for the target meal and remaining macros — these are foods the user already has and are most actionable
+- Do NOT force-rank a catalog item above an internet recommendation if the catalog item is clearly inappropriate for the meal type (e.g., heavy curry for breakfast) or a poor macro fit
+- Among equally relevant items, catalog beats internet
+- When the catalog has few or no suitable options, fill remaining slots with internet recommendations — this is expected and correct
+- The top 3 recommendations should be the strongest suggestions
+
+DIET TYPE DEFINITIONS (STRICT — no exceptions):
+- "vegetarian": Lacto-vegetarian. ALLOWED: dairy (milk, cheese, paneer, yogurt, butter, ghee), all plant-based foods, grains, legumes, vegetables, fruits, nuts, seeds. FORBIDDEN: eggs, fish, seafood, meat, poultry, gelatin, lard, any animal-derived ingredient except dairy. This is NOT ovo-lacto — eggs are explicitly excluded.
+- "veg_eggs": Lacto-ovo-vegetarian. ALLOWED: everything in "vegetarian" PLUS eggs (boiled, scrambled, omelette, etc.). FORBIDDEN: fish, seafood, meat, poultry, gelatin, lard.
+- "vegan": No animal products whatsoever. ALLOWED: only plant-based foods. FORBIDDEN: dairy, eggs, honey, fish, seafood, meat, poultry, gelatin, ghee, butter, paneer.
+- "pescatarian": ALLOWED: everything in "veg_eggs" PLUS fish and seafood. FORBIDDEN: meat, poultry.
+- "non_veg": No restrictions — all foods allowed including meat, poultry, fish, eggs, dairy.
+- When diet_type is set, EVERY recommendation (both catalog and internet) MUST comply. Do NOT suggest a recipe that contains ANY forbidden ingredient for the user's diet type. If a catalog item contains a forbidden ingredient, skip it — do not recommend it even if it's frequently logged.
 
 PROFILE NULL HANDLING:
 - If diet_type, cuisines, or allergies are not provided (null/empty), omit those constraints entirely — do NOT assume defaults.
@@ -241,6 +259,15 @@ Return JSON:
     "cuisine_tag": "string or null"
   }]
 }`;
+
+/** Short constraint reminders injected into the user prompt alongside diet_type. */
+const DIET_TYPE_LABELS: Record<string, string> = {
+  vegetarian: "NO eggs, NO fish, NO meat — dairy and plant foods only",
+  veg_eggs: "eggs OK, NO fish, NO meat — dairy, eggs, and plant foods",
+  vegan: "NO animal products at all — plant-based only",
+  pescatarian: "fish/seafood OK, eggs OK, dairy OK — NO meat/poultry",
+  non_veg: "no restrictions",
+};
 
 /**
  * Builds the user prompt for meal recommendations.
@@ -274,8 +301,10 @@ export function buildRecommendationPrompt(params: {
     allergies?: string[] | null;
     weightGoal?: string | null;
   } | null;
+  /** Target meal category for meal-aware recommendations. */
+  targetMeal?: string | null;
 }): string {
-  const { mode, timeOfDay, remainingMacros, catalogItems, query, profile } =
+  const { mode, timeOfDay, remainingMacros, catalogItems, query, profile, targetMeal } =
     params;
 
   // Pre-LLM guard: replace negative macros with explicit exceeded-budget message
@@ -297,7 +326,11 @@ export function buildRecommendationPrompt(params: {
   let profileSection = "";
   if (profile) {
     const parts: string[] = [];
-    if (profile.dietType) parts.push(`Diet type: ${profile.dietType}`);
+    if (profile.dietType) {
+      // Expand diet type with explicit constraint reminder so the model cannot misinterpret
+      const dietLabel = DIET_TYPE_LABELS[profile.dietType] ?? profile.dietType;
+      parts.push(`Diet type: ${profile.dietType} (${dietLabel})`);
+    }
     if (profile.cuisines && profile.cuisines.length > 0)
       parts.push(`Preferred cuisines: ${profile.cuisines.join(", ")}`);
     if (profile.allergies && profile.allergies.length > 0)
@@ -312,9 +345,14 @@ export function buildRecommendationPrompt(params: {
   const querySection =
     mode === "query" && query ? `\nUser query: "${query}"` : "";
 
-  return `Recommend 2-3 meals based on the following context.
+  // Target meal section — when prefetching for a specific meal slot
+  const targetMealSection = targetMeal
+    ? `\nTarget meal: ${targetMeal} — recommend foods specifically appropriate for this meal category.`
+    : "";
 
-Time of day: ${timeOfDay}
+  return `Recommend 5 meals based on the following context.
+
+Time of day: ${timeOfDay}${targetMealSection}
 ${macrosSection}
 ${catalogSection}${profileSection}${querySection}
 

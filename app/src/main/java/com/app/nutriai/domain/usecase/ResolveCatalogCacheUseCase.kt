@@ -13,6 +13,13 @@ import javax.inject.Inject
  * (case-insensitive exact name match). If a match is found, the cached [FoodItem]
  * is attached so the UI can show "Found in catalog" and reuse macros.
  *
+ * Edge Function migration: The `parse-food` Edge Function now pre-resolves catalog
+ * matches server-side against Supabase. When [ParsedFood.edgeCatalogMatch] is non-null,
+ * we trust the server result and skip the local Room query for that item. Local Room
+ * lookup is still performed as a fallback for items where the Edge Function didn't
+ * find a match — this covers food items that exist in local Room but haven't been
+ * synced to Supabase yet.
+ *
  * Checks BOTH catalogs:
  * - Recipes are resolved against [Constants.RECIPE_CATALOG_ID]
  * - Ingredients (flat items or recipe ingredients) are resolved against [Constants.INGREDIENT_CATALOG_ID]
@@ -29,6 +36,10 @@ class ResolveCatalogCacheUseCase @Inject constructor(
     /**
      * Check each parsed food against the appropriate local catalog.
      *
+     * If the Edge Function already resolved a catalog match ([ParsedFood.edgeCatalogMatch]),
+     * we use that directly. Otherwise, we fall back to local Room lookup — this covers
+     * food items that exist locally but haven't been synced to Supabase yet.
+     *
      * For recipe items: resolves the recipe name against the Recipes catalog,
      * and each ingredient against the Ingredients catalog.
      * For flat items: resolves the item against the Ingredients catalog.
@@ -40,16 +51,19 @@ class ResolveCatalogCacheUseCase @Inject constructor(
         parsedFoods: List<ParsedFood>
     ): List<CatalogMatch> {
         return parsedFoods.map { parsed ->
+            // Short-circuit: Edge Function already resolved this item
+            val edgeMatch = parsed.edgeCatalogMatch
+            if (edgeMatch != null && edgeMatch.isFromCatalog && edgeMatch.foodItem != null) {
+                return@map CatalogMatch(
+                    parsedFood = parsed,
+                    matchedFoodItem = edgeMatch.foodItem
+                )
+            }
+
             if (parsed.isRecipe) {
                 // For recipes: resolve each ingredient against the Ingredients catalog
                 val resolvedIngredients = parsed.ingredients.map { ingredient ->
-                    val match = foodRepository.searchFoodByNameExact(
-                        ingredient.name, Constants.INGREDIENT_CATALOG_ID
-                    )
-                    CatalogMatch(
-                        parsedFood = ingredient,
-                        matchedFoodItem = match
-                    )
+                    resolveIngredientSingle(ingredient)
                 }
                 // Also check if the recipe itself exists in the Recipes catalog
                 val recipeMatch = foodRepository.searchFoodByNameExact(
@@ -89,13 +103,30 @@ class ResolveCatalogCacheUseCase @Inject constructor(
         ingredients: List<ParsedFood>
     ): List<CatalogMatch> {
         return ingredients.map { ingredient ->
-            val match = foodRepository.searchFoodByNameExact(
-                ingredient.name, Constants.INGREDIENT_CATALOG_ID
-            )
-            CatalogMatch(
+            resolveIngredientSingle(ingredient)
+        }
+    }
+
+    /**
+     * Resolve a single ingredient, preferring the Edge Function's pre-resolved match.
+     */
+    private suspend fun resolveIngredientSingle(ingredient: ParsedFood): CatalogMatch {
+        // Short-circuit: Edge Function already resolved this ingredient
+        val edgeMatch = ingredient.edgeCatalogMatch
+        if (edgeMatch != null && edgeMatch.isFromCatalog && edgeMatch.foodItem != null) {
+            return CatalogMatch(
                 parsedFood = ingredient,
-                matchedFoodItem = match
+                matchedFoodItem = edgeMatch.foodItem
             )
         }
+
+        // Fallback: local Room lookup for unsynced data
+        val match = foodRepository.searchFoodByNameExact(
+            ingredient.name, Constants.INGREDIENT_CATALOG_ID
+        )
+        return CatalogMatch(
+            parsedFood = ingredient,
+            matchedFoodItem = match
+        )
     }
 }
