@@ -14,6 +14,7 @@ import {
   determineNextMealSlot,
   deriveMissedMeals,
 } from "@/lib/utils/meal-progression";
+import type { Json } from "@/lib/types/database";
 import type { MealType } from "@/lib/types/domain";
 import type { Recommendation } from "@/lib/types/recommendation";
 
@@ -96,7 +97,7 @@ export function useCachedRecommendations() {
         .maybeSingle();
 
       if (cached?.recommendations) {
-        return cached.recommendations as Recommendation[];
+        return cached.recommendations as unknown as Recommendation[];
       }
 
       // Cold start — no cache yet.
@@ -132,8 +133,8 @@ export function useCachedRecommendations() {
               user_id: (await supabase.auth.getUser()).data.user!.id,
               meal_type: nextMeal,
               date_timestamp: dayMs,
-              recommendations: recs,
-              remaining_macros: remainingMacros,
+              recommendations: recs as unknown as Json,
+              remaining_macros: remainingMacros as unknown as Json,
             },
             { onConflict: "user_id,meal_type,date_timestamp" }
           )

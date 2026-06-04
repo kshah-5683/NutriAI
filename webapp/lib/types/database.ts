@@ -208,6 +208,36 @@ export type Database = {
         };
         Relationships: [];
       };
+      recommendation_cache: {
+        Row: {
+          id: string;
+          user_id: string;
+          meal_type: string;
+          date_timestamp: number;
+          recommendations: Json;
+          remaining_macros: Json;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          meal_type: string;
+          date_timestamp: number;
+          recommendations: Json;
+          remaining_macros: Json;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          meal_type?: string;
+          date_timestamp?: number;
+          recommendations?: Json;
+          remaining_macros?: Json;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
       ifct_foods: {
         Row: {
           /** code is the primary key — e.g. "G001", "P001" */
