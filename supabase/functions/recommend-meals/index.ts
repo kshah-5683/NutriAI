@@ -213,7 +213,38 @@ serve(async (req) => {
       contentPart?.text ?? '{"recommendations": []}'
     );
 
-    return new Response(JSON.stringify(parsed), {
+    // 9. Recompute macros for catalog recommendations from DB data.
+    //    The AI is not trusted to do arithmetic — it receives base macros per-serving
+    //    and a suggested_quantity, but floating-point multiplication is code's job.
+    //    For internet items there is no DB source of truth, so the AI estimate is kept.
+    const itemMap = new Map<string, typeof allItems[number]>(
+      // deno-lint-ignore no-explicit-any
+      allItems.map((item: any) => [item.id, item])
+    );
+
+    // deno-lint-ignore no-explicit-any
+    const recommendations = (parsed.recommendations ?? []).map((rec: any) => {
+      if (rec.source === "catalog" && rec.food_item_id) {
+        // deno-lint-ignore no-explicit-any
+        const item = itemMap.get(rec.food_item_id) as any;
+        if (item) {
+          const qty = typeof rec.suggested_quantity === "number" && rec.suggested_quantity > 0
+            ? rec.suggested_quantity
+            : 1;
+          return {
+            ...rec,
+            calories: Math.round(item.base_calories * qty * 10) / 10,
+            protein:  Math.round(item.base_protein  * qty * 10) / 10,
+            carbs:    Math.round(item.base_carbs     * qty * 10) / 10,
+            fat:      Math.round(item.base_fat       * qty * 10) / 10,
+          };
+        }
+      }
+      // Internet recommendations — keep AI estimate (no DB lookup available)
+      return rec;
+    });
+
+    return new Response(JSON.stringify({ ...parsed, recommendations }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err) {
