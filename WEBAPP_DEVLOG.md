@@ -28,6 +28,7 @@
 - [Phase W12: Catalog Re-Log Macro Fix — Per-100g De-Normalization](#phase-w12-catalog-re-log-macro-fix--per-100g-de-normalization)
 - [Phase W13: AI Parse Fixes — Recipe Nutrition, Serving Size Pre-Scaling & Button Loading State](#phase-w13-ai-parse-fixes--recipe-nutrition-serving-size-pre-scaling--button-loading-state)
 - [Phase W14: Recommendation Cache Type Safety](#phase-w14-recommendation-cache-type-safety)
+- [Phase W15: AI Parse + Recommendation Quality Improvements](#phase-w15-ai-parse--recommendation-quality-improvements)
 - [Architecture Decisions](#architecture-decisions)
 - [Known Issues & Tech Debt](#known-issues--tech-debt)
 
@@ -1390,6 +1391,124 @@ const recs = cached.recommendations as unknown as Recommendation[];
 | # | Decision | Rationale |
 |---|----------|-----------|
 | W57 | Use `as unknown as T` double-cast for Supabase JSONB columns | Supabase's `Json` type (`string \| number \| boolean \| null \| { [key: string]: Json } \| Json[]`) doesn't structurally overlap with domain types like `Recommendation[]`. TypeScript correctly rejects a direct `as` cast. The double-cast via `unknown` is the standard pattern for JSONB columns with known runtime shapes. |
+
+---
+
+## Phase W15: AI Parse + Recommendation Quality Improvements
+
+**Status:** ✅ Completed
+**Date:** June 5, 2026
+
+### Summary
+
+Two independent improvements: (1) corrected the nutrition lookup strategy for AI-parsed recipes so only ingredients are looked up (not the recipe name), and (2) overhauled the `recommend-meals` Edge Function to prioritize saved recipes first, then prefer internet suggestions that use existing catalog ingredients.
+
+> ⚠️ **Requires Edge Function redeployment** — changes to `recommend-meals/index.ts` and `_shared/prompts.ts` are server-side and take effect only after `supabase functions deploy recommend-meals`.
+
+---
+
+### Change 1: Recipe Ingredient-Only Nutrition Lookup
+
+**File:** `webapp/lib/hooks/use-nutrition-lookup.ts`
+
+**Problem:** `lookupAll()` was firing a nutrition lookup for the recipe name itself (e.g. "Strawberry Milkshake") in addition to each ingredient. The recipe-name lookup was wasted — `nutritionResults["strawberry milkshake"]` is never used since the `log-recipe` Edge Function computes totals from per-ingredient macros. It could also pollute `nutritionResults` with unrelated data.
+
+**Fix:** The recipe path now exclusively loops over ingredients. The top-level name lookup is skipped when `food.isRecipe` is true.
+
+```typescript
+// Before: looked up BOTH recipe name AND each ingredient
+for (const food of foods) {
+  if (!food.catalogMatch?.isFromCatalog && !food.needsClarification) {
+    lookupNutrition(food.name);  // ← fired even for recipes
+  }
+  if (food.isRecipe && food.ingredients) {
+    for (const ing of food.ingredients) { lookupNutrition(ing.name); }
+  }
+}
+
+// After: recipes go to ingredient loop only, non-recipes look up by name
+for (const food of foods) {
+  if (food.isRecipe && food.ingredients) {
+    for (const ing of food.ingredients) {
+      if (!ing.catalogMatch?.isFromCatalog) { lookupNutrition(ing.name); }
+    }
+  } else if (!food.catalogMatch?.isFromCatalog && !food.needsClarification) {
+    lookupNutrition(food.name);
+  }
+}
+```
+
+---
+
+### Change 2: Recommendation Prioritization — Saved Recipes + Ingredient Overlap
+
+**Files:** `supabase/functions/recommend-meals/index.ts`, `supabase/functions/_shared/prompts.ts`
+
+**Problem:** The recommendation engine treated saved recipes and raw ingredients as a single mixed pool. Frequently-logged ingredients (e.g. "oats", "egg") could crowd out complete saved recipes. Internet suggestions also had no preference for recipes that used ingredients the user already had.
+
+#### 2a. Edge Function — Separate Recipe vs Ingredient Ranking
+
+`recommend-meals/index.ts` now:
+- Fetches `catalog_id` alongside food item fields
+- Splits items into `recipeItems` (recipe catalog) and `ingredientItems` (ingredient catalog)
+- Ranks and shuffles each group independently:
+  - Top 8 recipes by frequency → shuffle → take 5 for prompt (`savedRecipesForPrompt`)
+  - Top 15 ingredients by frequency → shuffle → take 10 for prompt (`availableIngredientsForPrompt`)
+
+```typescript
+const recipeItems = allItems.filter(item => item.catalog_id === recipeCatalogId);
+const ingredientItems = allItems.filter(item => item.catalog_id === ingredientCatalogId);
+
+const savedRecipesForPrompt = shuffle(
+  recipeItems.map(withFreq).sort(byFreqDesc).slice(0, 8)
+).slice(0, 5).map(toPromptItem);
+
+const availableIngredientsForPrompt = shuffle(
+  ingredientItems.map(withFreq).sort(byFreqDesc).slice(0, 15)
+).slice(0, 10).map(toPromptItem);
+```
+
+#### 2b. Prompt Builder — Two Labeled Catalog Sections
+
+`buildRecommendationPrompt()` now accepts `savedRecipes` and `availableIngredients` (replacing the single `catalogItems` parameter) and emits them as two distinct labeled sections in the prompt:
+
+```
+Saved recipes (user's own catalog — HIGHEST PRIORITY, prefer these first):
+[...savedRecipes...]
+
+Available ingredients in user's catalog (prefer internet recipes that use these):
+[...availableIngredients...]
+```
+
+#### 2c. System Instruction — 4-Tier Ranking
+
+Updated `RECOMMENDATION_SYSTEM_INSTRUCTION` with an explicit priority ordering:
+
+| Tier | Source | Description |
+|------|--------|-------------|
+| 1 | `catalog` | Saved recipes — complete meals, highest priority |
+| 2 | `catalog` | Individual ingredients usable as standalone components |
+| 3 | `internet` | New recipes that use available ingredients |
+| 4 | `internet` | New recipes with no catalog overlap |
+
+Rule 7 explicitly instructs the model to mention which available ingredients an internet recipe uses in the `reason` field.
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `webapp/lib/hooks/use-nutrition-lookup.ts` | Updated | `lookupAll()`: recipes skip top-level name lookup; only ingredients are looked up |
+| 2 | `supabase/functions/recommend-meals/index.ts` | Updated | Fetches `catalog_id`, splits items into recipes vs ingredients, ranks each group separately, passes both to prompt builder |
+| 3 | `supabase/functions/_shared/prompts.ts` | Updated | `buildRecommendationPrompt()`: replaced `catalogItems` param with `savedRecipes` + `availableIngredients`; emits two labeled prompt sections |
+| 4 | `supabase/functions/_shared/prompts.ts` | Updated | `RECOMMENDATION_SYSTEM_INSTRUCTION`: 4-tier ranking rules; internet suggestions biased toward available ingredients |
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| W58 | Skip recipe-name nutrition lookup in `lookupAll()` | The `log-recipe` Edge Function sums `base_*` values from per-ingredient matches — it never reads a recipe-level `nutritionResults` entry. Looking up the recipe name wastes an Edge Function call and can produce a misleading result in the store. |
+| W59 | Rank saved recipes and ingredients in separate quota pools | A single merged pool sorted by log frequency would bury infrequently-used saved recipes beneath commonly-logged ingredients (e.g. "oats" logged daily outranks a saved smoothie recipe logged weekly). Separate pools guarantee saved recipes always get representation in the prompt regardless of ingredient frequency. |
+| W60 | Pass saved recipes and available ingredients as distinct labeled sections to the LLM | A single unlabeled "catalog" list gave the model no signal about which items are complete meals vs raw ingredients. Separate labeled sections let the system instruction express a clear preference hierarchy: suggest a complete saved recipe before suggesting an internet recipe that happens to use the same ingredients. |
 
 ---
 

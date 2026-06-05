@@ -85,16 +85,20 @@ export function useNutritionLookup() {
       }>
     ) => {
       for (const food of foods) {
-        if (!food.catalogMatch?.isFromCatalog && !food.needsClarification) {
-          lookupNutrition(food.name);
-        }
-        // Recipes: also look up each ingredient that isn't already in the catalog
         if (food.isRecipe && food.ingredients) {
+          // Recipes: look up each ingredient only — do NOT look up the recipe name.
+          // The log-recipe Edge Function computes the recipe total from per-ingredient
+          // macros, so a recipe-level nutrition lookup is wasted and can pollute
+          // nutritionResults with irrelevant data (e.g. "strawberry milkshake" as a
+          // single food vs the correct sum of its parts).
           for (const ing of food.ingredients) {
             if (!ing.catalogMatch?.isFromCatalog) {
               lookupNutrition(ing.name);
             }
           }
+        } else if (!food.catalogMatch?.isFromCatalog && !food.needsClarification) {
+          // Non-recipe: look up the food name directly
+          lookupNutrition(food.name);
         }
       }
     },

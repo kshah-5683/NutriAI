@@ -80,7 +80,7 @@ serve(async (req) => {
     const [{ data: foodItems }, { data: logRows }] = await Promise.all([
       supabase
         .from("food_items")
-        .select("id, name, base_calories, base_protein, base_carbs, base_fat")
+        .select("id, name, catalog_id, base_calories, base_protein, base_carbs, base_fat")
         .in("catalog_id", [ingredientCatalogId, recipeCatalogId])
         .is("deleted_at", null),
       supabase
@@ -91,7 +91,9 @@ serve(async (req) => {
         .not("food_item_id", "is", null),
     ]);
 
-    // 4. Count frequencies in JS, rank, shuffle, take 15
+    // 4. Count frequencies, then rank recipes and ingredients separately.
+    // Saved recipes get their own top-N slice so they aren't crowded out by
+    // frequently-logged raw ingredients.
     const freqMap = new Map<string, number>();
     for (const row of logRows ?? []) {
       freqMap.set(
@@ -100,26 +102,36 @@ serve(async (req) => {
       );
     }
 
-    const ranked = (foodItems ?? [])
-      // deno-lint-ignore no-explicit-any
-      .map((item: any) => ({ ...item, freq: freqMap.get(item.id) ?? 0 }))
-      .sort(
-        // deno-lint-ignore no-explicit-any
-        (a: any, b: any) => b.freq - a.freq
-      )
-      .slice(0, 20);
+    const allItems = foodItems ?? [];
 
-    const catalogForPrompt = shuffle(ranked)
-      .slice(0, 15)
-      // deno-lint-ignore no-explicit-any
-      .map((item: any) => ({
-        id: item.id,
-        name: item.name,
-        kcal: item.base_calories,
-        p: item.base_protein,
-        c: item.base_carbs,
-        f: item.base_fat,
-      }));
+    // deno-lint-ignore no-explicit-any
+    const recipeItems = allItems.filter((item: any) => item.catalog_id === recipeCatalogId);
+    // deno-lint-ignore no-explicit-any
+    const ingredientItems = allItems.filter((item: any) => item.catalog_id === ingredientCatalogId);
+
+    // deno-lint-ignore no-explicit-any
+    const withFreq = (item: any) => ({ ...item, freq: freqMap.get(item.id) ?? 0 });
+    // deno-lint-ignore no-explicit-any
+    const byFreqDesc = (a: any, b: any) => b.freq - a.freq;
+    // deno-lint-ignore no-explicit-any
+    const toPromptItem = (item: any) => ({
+      id: item.id,
+      name: item.name,
+      kcal: item.base_calories,
+      p: item.base_protein,
+      c: item.base_carbs,
+      f: item.base_fat,
+    });
+
+    // Top 8 recipes by frequency (shuffled to add variety), up to 5 in prompt
+    const savedRecipesForPrompt = shuffle(
+      recipeItems.map(withFreq).sort(byFreqDesc).slice(0, 8)
+    ).slice(0, 5).map(toPromptItem);
+
+    // Top 15 ingredients by frequency (shuffled), up to 10 in prompt
+    const availableIngredientsForPrompt = shuffle(
+      ingredientItems.map(withFreq).sort(byFreqDesc).slice(0, 15)
+    ).slice(0, 10).map(toPromptItem);
 
     // 5. Optionally fetch profile (only if includeInternet)
     let profile = null;
@@ -151,7 +163,8 @@ serve(async (req) => {
       mode,
       timeOfDay: timeOfDay ?? inferTimeOfDay(),
       remainingMacros,
-      catalogItems: catalogForPrompt,
+      savedRecipes: savedRecipesForPrompt,
+      availableIngredients: availableIngredientsForPrompt,
       query: mode === "query" ? sanitizedQuery : undefined,
       profile,
       targetMeal: targetMeal ?? null,
