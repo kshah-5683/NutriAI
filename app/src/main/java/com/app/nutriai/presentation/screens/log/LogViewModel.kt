@@ -206,12 +206,32 @@ data class LogUiState(
     // -- Meal type (Phase M-Android) --
     val mealType: MealType = MealType.inferFromCurrentTime(),
     val isSaving: Boolean = false,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+
+    // -- Ingredient inline edit dialog (AI parsed mode) --
+    // Non-null while the edit dialog is open for a specific ingredient.
+    val editingIngredient: EditingIngredientState? = null
 ) {
     companion object {
         /** Available unit options for the dropdown — kept in sync with webapp UNIT_OPTIONS */
         val UNIT_OPTIONS = listOf("g", "serving", "tsp", "tbsp", "cup", "ml", "piece", "slice", "bowl")
     }
+
+    /**
+     * State for the inline ingredient edit dialog in AI parsed mode.
+     *
+     * Shown when the user taps the pencil icon on an ingredient row.
+     * Text fields are pre-filled from the current [ParsedFood] values.
+     */
+    data class EditingIngredientState(
+        val foodIndex: Int,
+        val ingredientIndex: Int,
+        val name: String,
+        /** Current quantity as a formatted string — bound to the TextField */
+        val quantity: String,
+        /** Current unit — bound to the dropdown */
+        val unit: String
+    )
 
     /**
      * Whether the form has enough data to save.
@@ -918,6 +938,49 @@ class LogViewModel @Inject constructor(
     /** Move an ingredient one position down. Delegates to [IngredientListDelegate]. */
     fun moveIngredientDown(foodIndex: Int, ingredientIndex: Int) =
         ingredientListDelegate.moveIngredientDown(foodIndex, ingredientIndex)
+
+    /**
+     * Update quantity and unit of a parsed ingredient in-place.
+     * Does not break the ingredient out of the recipe — it remains part of the
+     * recipe card and flows through [acceptAndLogAllParsed] unchanged except for
+     * the new values.
+     */
+    fun updateParsedIngredient(foodIndex: Int, ingredientIndex: Int, quantity: Double, unit: String) =
+        ingredientListDelegate.updateParsedIngredient(foodIndex, ingredientIndex, quantity, unit)
+
+    /**
+     * Open the inline edit dialog pre-filled with the ingredient's current values.
+     * No-op if [foodIndex]/[ingredientIndex] are out of range.
+     */
+    fun beginEditIngredient(foodIndex: Int, ingredientIndex: Int) {
+        val ingredient = _uiState.value.parsedFoods.getOrNull(foodIndex)
+            ?.ingredients?.getOrNull(ingredientIndex) ?: return
+        _uiState.update {
+            it.copy(
+                editingIngredient = LogUiState.EditingIngredientState(
+                    foodIndex = foodIndex,
+                    ingredientIndex = ingredientIndex,
+                    name = ingredient.name,
+                    quantity = ingredient.quantity.formatMacro(),
+                    unit = ingredient.unit
+                )
+            )
+        }
+    }
+
+    /** Close the inline edit dialog without saving. */
+    fun dismissEditIngredient() = _uiState.update { it.copy(editingIngredient = null) }
+
+    /**
+     * Validate and apply the inline edit, then dismiss the dialog.
+     * No-op when [quantity] is not a valid positive number.
+     */
+    fun confirmEditIngredient(quantity: String, unit: String) {
+        val editing = _uiState.value.editingIngredient ?: return
+        val qty = quantity.toDoubleOrNull()?.takeIf { it > 0 } ?: return
+        updateParsedIngredient(editing.foodIndex, editing.ingredientIndex, qty, unit)
+        dismissEditIngredient()
+    }
 
     /**
      * Clear parsed foods and return to AI input.

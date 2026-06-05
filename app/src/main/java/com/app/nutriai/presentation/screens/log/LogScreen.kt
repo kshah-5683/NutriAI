@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Egg
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -67,6 +68,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.foundation.shape.CircleShape
@@ -258,6 +260,9 @@ fun LogScreen(
                         onRemoveIngredient = viewModel::removeIngredient,
                         onMoveIngredientUp = viewModel::moveIngredientUp,
                         onMoveIngredientDown = viewModel::moveIngredientDown,
+                        onEditIngredient = viewModel::beginEditIngredient,
+                        onDismissEditIngredient = viewModel::dismissEditIngredient,
+                        onConfirmEditIngredient = viewModel::confirmEditIngredient,
                         onUseGeneric = viewModel::resolveClarificationGeneric,
                         onSubmitClarification = { index, input ->
                             val weightRegex = Regex("""(\d+\.?\d*)\s*g?""")
@@ -422,6 +427,9 @@ private fun AiInputSection(
     onRemoveIngredient: (foodIndex: Int, ingredientIndex: Int) -> Unit = { _, _ -> },
     onMoveIngredientUp: (foodIndex: Int, ingredientIndex: Int) -> Unit = { _, _ -> },
     onMoveIngredientDown: (foodIndex: Int, ingredientIndex: Int) -> Unit = { _, _ -> },
+    onEditIngredient: (foodIndex: Int, ingredientIndex: Int) -> Unit = { _, _ -> },
+    onDismissEditIngredient: () -> Unit = {},
+    onConfirmEditIngredient: (qty: String, unit: String) -> Unit = { _, _ -> },
     onUseGeneric: (Int) -> Unit = {},
     onSubmitClarification: (Int, String) -> Unit = { _, _ -> },
     onLabelPhotoSelected: (Uri) -> Unit = {},
@@ -688,6 +696,7 @@ private fun AiInputSection(
                         onRemoveIngredient = { ingIdx -> onRemoveIngredient(index, ingIdx) },
                         onMoveIngredientUp = { ingIdx -> onMoveIngredientUp(index, ingIdx) },
                         onMoveIngredientDown = { ingIdx -> onMoveIngredientDown(index, ingIdx) },
+                        onEditIngredient = { ingIdx -> onEditIngredient(index, ingIdx) },
                         modifier = Modifier.padding(vertical = 4.dp)
                     )
                 }
@@ -825,6 +834,79 @@ private fun AiInputSection(
                 modifier = Modifier.padding(vertical = 4.dp)
             )
         }
+
+        // Inline ingredient edit dialog — driven by uiState.editingIngredient
+        val editing = uiState.editingIngredient
+        if (editing != null) {
+            var localQty by remember(editing.foodIndex, editing.ingredientIndex) {
+                mutableStateOf(editing.quantity)
+            }
+            var localUnit by remember(editing.foodIndex, editing.ingredientIndex) {
+                mutableStateOf(editing.unit)
+            }
+            var unitDropdownExpanded by remember { mutableStateOf(false) }
+
+            AlertDialog(
+                onDismissRequest = onDismissEditIngredient,
+                title = { Text("Edit: ${editing.name}") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        OutlinedTextField(
+                            value = localQty,
+                            onValueChange = { localQty = it },
+                            label = { Text("Quantity") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            OutlinedTextField(
+                                value = localUnit,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Unit") },
+                                trailingIcon = {
+                                    IconButton(onClick = { unitDropdownExpanded = !unitDropdownExpanded }) {
+                                        Icon(
+                                            imageVector = Icons.Filled.ArrowDropDown,
+                                            contentDescription = "Select unit"
+                                        )
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            DropdownMenu(
+                                expanded = unitDropdownExpanded,
+                                onDismissRequest = { unitDropdownExpanded = false }
+                            ) {
+                                LogUiState.UNIT_OPTIONS.forEach { option ->
+                                    DropdownMenuItem(
+                                        text = { Text(option) },
+                                        onClick = {
+                                            localUnit = option
+                                            unitDropdownExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = { onConfirmEditIngredient(localQty, localUnit) },
+                        enabled = localQty.toDoubleOrNull()?.let { it > 0 } == true
+                    ) {
+                        Text("Save")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = onDismissEditIngredient) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
     }
 }
 
@@ -855,6 +937,7 @@ private fun ParsedFoodCard(
     onRemoveIngredient: (Int) -> Unit = {},
     onMoveIngredientUp: (Int) -> Unit = {},
     onMoveIngredientDown: (Int) -> Unit = {},
+    onEditIngredient: (Int) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val containerColor = if (isSelected) {
@@ -1043,7 +1126,8 @@ private fun ParsedFoodCard(
                             onClick = { onIngredientClick(ingIndex) },
                             onMoveUp = { onMoveIngredientUp(ingIndex) },
                             onMoveDown = { onMoveIngredientDown(ingIndex) },
-                            onRemove = { onRemoveIngredient(ingIndex) }
+                            onRemove = { onRemoveIngredient(ingIndex) },
+                            onEdit = { onEditIngredient(ingIndex) }
                         )
                     }
                 }
@@ -1080,6 +1164,7 @@ private fun IngredientRow(
     onMoveUp: () -> Unit = {},
     onMoveDown: () -> Unit = {},
     onRemove: () -> Unit = {},
+    onEdit: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val rowBackground = if (isIngredientSelected) {
@@ -1173,8 +1258,19 @@ private fun IngredientRow(
             }
         }
 
-        // Reorder and remove action buttons
+        // Edit, reorder and remove action buttons
         Spacer(modifier = Modifier.width(2.dp))
+        IconButton(
+            onClick = onEdit,
+            modifier = Modifier.size(24.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Edit,
+                contentDescription = "Edit quantity / unit",
+                modifier = Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+            )
+        }
         IconButton(
             onClick = onMoveUp,
             enabled = canMoveUp,

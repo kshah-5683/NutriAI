@@ -29,6 +29,7 @@
 - [Phase W13: AI Parse Fixes — Recipe Nutrition, Serving Size Pre-Scaling & Button Loading State](#phase-w13-ai-parse-fixes--recipe-nutrition-serving-size-pre-scaling--button-loading-state)
 - [Phase W14: Recommendation Cache Type Safety](#phase-w14-recommendation-cache-type-safety)
 - [Phase W15: AI Parse + Recommendation Quality Improvements](#phase-w15-ai-parse--recommendation-quality-improvements)
+- [Phase W16: Recommendation Macro Accuracy — Server-Side Recalculation](#phase-w16-recommendation-macro-accuracy--server-side-recalculation)
 - [Architecture Decisions](#architecture-decisions)
 - [Known Issues & Tech Debt](#known-issues--tech-debt)
 
@@ -1509,6 +1510,90 @@ Rule 7 explicitly instructs the model to mention which available ingredients an 
 | W58 | Skip recipe-name nutrition lookup in `lookupAll()` | The `log-recipe` Edge Function sums `base_*` values from per-ingredient matches — it never reads a recipe-level `nutritionResults` entry. Looking up the recipe name wastes an Edge Function call and can produce a misleading result in the store. |
 | W59 | Rank saved recipes and ingredients in separate quota pools | A single merged pool sorted by log frequency would bury infrequently-used saved recipes beneath commonly-logged ingredients (e.g. "oats" logged daily outranks a saved smoothie recipe logged weekly). Separate pools guarantee saved recipes always get representation in the prompt regardless of ingredient frequency. |
 | W60 | Pass saved recipes and available ingredients as distinct labeled sections to the LLM | A single unlabeled "catalog" list gave the model no signal about which items are complete meals vs raw ingredients. Separate labeled sections let the system instruction express a clear preference hierarchy: suggest a complete saved recipe before suggesting an internet recipe that happens to use the same ingredients. |
+
+---
+
+## Phase W16: Recommendation Macro Accuracy — Server-Side Recalculation
+
+**Status:** ✅ Completed
+**Date:** June 5, 2026
+
+### Summary
+
+Removed AI arithmetic from the recommendation pipeline. For `source="catalog"` items, the AI was multiplying per-serving macros by `suggested_quantity` — floating-point math that belongs in code, not in the LLM. The Edge Function now intercepts the AI's JSON output and recomputes catalog macros deterministically from the DB data already in memory.
+
+> ⚠️ **Requires Edge Function redeployment**: `supabase functions deploy recommend-meals`
+
+### Root Cause Analysis
+
+The `recommend-meals` Edge Function fetched catalog items from the DB (with their stored `base_calories`, `base_protein`, etc.), sent them to the AI, and trusted the AI's returned `calories`/`protein`/`carbs`/`fat` fields verbatim. The system instruction told the AI:
+
+> *"The macros returned MUST reflect suggested_quantity × per-serving macros"*
+
+This means:
+- The AI received `{ kcal: 91.25, p: 2.1, c: 18.4, f: 1.2 }` for a saved recipe
+- The AI returned `{ calories: 182.5, protein: 4.2, ... }` for `suggested_quantity: 2`
+- The client used those AI-computed numbers directly
+
+LLMs are unreliable at arithmetic — minor floating-point deviations, hallucinated values, or rounding errors could silently produce wrong macro totals in the recommendation cards.
+
+**Crucially, all the correct data was already in memory**: `allItems` was fetched from the DB in step 3 of the same request. The fix costs zero extra DB calls.
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `supabase/functions/recommend-meals/index.ts` | Updated | Added step 9: build `itemMap` from `allItems`, iterate recommendations, replace AI-provided macros for `source="catalog"` items with `base_* × suggested_quantity` computed in Deno/JS |
+| 2 | `supabase/functions/_shared/prompts.ts` | Updated | Rule 5 in `RECOMMENDATION_SYSTEM_INSTRUCTION`: removed "MUST reflect suggested_quantity × per-serving macros" instruction — AI no longer needs to do the math, server handles it |
+
+### Key Implementation
+
+```typescript
+// Step 9 — recompute catalog macros from DB data, don't trust AI arithmetic
+const itemMap = new Map(allItems.map((item: any) => [item.id, item]));
+
+const recommendations = (parsed.recommendations ?? []).map((rec: any) => {
+  if (rec.source === "catalog" && rec.food_item_id) {
+    const item = itemMap.get(rec.food_item_id) as any;
+    if (item) {
+      const qty = (typeof rec.suggested_quantity === "number" && rec.suggested_quantity > 0)
+        ? rec.suggested_quantity : 1;
+      return {
+        ...rec,
+        calories: Math.round(item.base_calories * qty * 10) / 10,
+        protein:  Math.round(item.base_protein  * qty * 10) / 10,
+        carbs:    Math.round(item.base_carbs     * qty * 10) / 10,
+        fat:      Math.round(item.base_fat       * qty * 10) / 10,
+      };
+    }
+  }
+  return rec; // internet items: keep AI estimate (no DB source of truth)
+});
+```
+
+### Scope
+
+| Recommendation type | Before | After |
+|--------------------|--------|-------|
+| `source="catalog"` | AI multiplied `base_* × suggested_quantity` | Code multiplies, rounded to 1dp |
+| `source="internet"` | AI estimated from recipe ingredients | Unchanged — no DB lookup possible |
+
+### Cross-Platform Context
+
+Android's AI parse flow was audited and confirmed correct — it never asks the AI for macros:
+1. AI returns food names + quantities only
+2. `LookupNutritionUseCase` → USDA FDC / IFCT → per-100g values
+3. `UnitConverter.computeServingMultiplier()` → Kotlin scales to consumed portion
+4. `LogFoodUseCase` normalizes for storage
+
+The recommendation flow had no equivalent server-side interception — this phase adds it.
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| W61 | Recompute catalog recommendation macros in Edge Function code, not in LLM | The DB-fetched `base_*` values are already in memory (from step 3). Trusting the LLM to multiply them correctly is unnecessary risk — LLMs can produce floating-point errors, hallucinate, or round inconsistently. Code multiplication is deterministic and free (zero extra DB calls). |
+| W62 | Keep AI macro estimates for `source="internet"` items | There is no database source of truth for internet recipe suggestions. The AI's estimate based on the recipe_text ingredient list is the only available signal. The estimate is approximate by nature and clearly displayed as such in the UI. |
 
 ---
 

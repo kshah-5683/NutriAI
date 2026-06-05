@@ -83,6 +83,12 @@ interface LogFormState {
   aiInput: string;
   isParsing: boolean;
   parsedFoods: ParsedFood[];
+  /**
+   * True immediately after a fresh AI parse sets parsedFoods.
+   * Set to false by updateParsedIngredient so the nutrition lookup
+   * useEffect does not re-fire on every inline ingredient edit.
+   */
+  parsedFoodsFromParse: boolean;
   selectedIndex: number | null;
   aiError: string | null;
 
@@ -124,6 +130,12 @@ interface LogFormState {
   setParsedFoods: (foods: ParsedFood[]) => void;
   selectFood: (index: number | null) => void;
   setAiError: (error: string | null) => void;
+  /**
+   * Patch quantity and unit for a single ingredient inside a parsed recipe card.
+   * Sets parsedFoodsFromParse to false so the nutrition lookup useEffect
+   * does not re-fire for every edit.
+   */
+  updateParsedIngredient: (foodIndex: number, ingIndex: number, patch: { quantity: number; unit: string }) => void;
   setNutritionResult: (name: string, info: NutritionInfo | null) => void;
   setNutritionLoading: (name: string, loading: boolean) => void;
   acceptParsedFood: (index: number) => void;
@@ -198,6 +210,7 @@ const initialAiState = {
   aiInput: "",
   isParsing: false,
   parsedFoods: [] as ParsedFood[],
+  parsedFoodsFromParse: false as boolean,
   selectedIndex: null as number | null,
   aiError: null as string | null,
   nutritionResults: {} as Record<string, NutritionInfo | null>,
@@ -224,6 +237,7 @@ export const useLogFormStore = create<LogFormState>((set, get) => ({
   setParsedFoods: (foods) =>
     set({
       parsedFoods: foods,
+      parsedFoodsFromParse: true,
       selectedIndex: null,
       aiError: null,
       isParsing: false,
@@ -232,6 +246,17 @@ export const useLogFormStore = create<LogFormState>((set, get) => ({
   selectFood: (index) => set({ selectedIndex: index }),
 
   setAiError: (error) => set({ aiError: error, isParsing: false }),
+
+  updateParsedIngredient: (foodIndex, ingIndex, patch) =>
+    set((state) => {
+      const foods = [...state.parsedFoods];
+      const food = foods[foodIndex];
+      if (!food) return state;
+      const ingredients = [...food.ingredients];
+      ingredients[ingIndex] = { ...ingredients[ingIndex], ...patch };
+      foods[foodIndex] = { ...food, ingredients };
+      return { parsedFoods: foods, parsedFoodsFromParse: false };
+    }),
 
   setNutritionResult: (name, info) =>
     set((state) => ({

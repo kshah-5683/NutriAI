@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useLogFormStore } from "@/lib/stores/log-form-store";
 import { useParseFood } from "@/lib/hooks/use-parse-food";
 import { useNutritionLookup } from "@/lib/hooks/use-nutrition-lookup";
 import { ParsedFoodCard } from "@/components/parsed-food-card";
 import { MealTypeSelector } from "@/components/meal-type-selector";
 import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 
 interface AiInputSectionProps {
   onLogAll: () => void;
@@ -22,6 +24,8 @@ export function AiInputSection({ onLogAll, onLogAllLoading }: AiInputSectionProp
   const setAiInput = useLogFormStore((s) => s.setAiInput);
   const isParsing = useLogFormStore((s) => s.isParsing);
   const parsedFoods = useLogFormStore((s) => s.parsedFoods);
+  const parsedFoodsFromParse = useLogFormStore((s) => s.parsedFoodsFromParse);
+  const updateParsedIngredient = useLogFormStore((s) => s.updateParsedIngredient);
   const selectedIndex = useLogFormStore((s) => s.selectedIndex);
   const selectFood = useLogFormStore((s) => s.selectFood);
   const aiError = useLogFormStore((s) => s.aiError);
@@ -36,9 +40,20 @@ export function AiInputSection({ onLogAll, onLogAllLoading }: AiInputSectionProp
   const parseMutation = useParseFood();
   const { lookupNutrition, lookupAll } = useNutritionLookup();
 
-  // After parse succeeds, fire nutrition lookups for new items
+  // Edit-ingredient dialog local state
+  const [editingIngredient, setEditingIngredient] = useState<{
+    foodIndex: number;
+    ingIndex: number;
+    name: string;
+    quantity: string;
+    unit: string;
+  } | null>(null);
+
+  // After parse succeeds, fire nutrition lookups for new items.
+  // Guard with parsedFoodsFromParse so inline edits (updateParsedIngredient)
+  // don't re-trigger redundant Edge Function calls.
   useEffect(() => {
-    if (parsedFoods.length > 0) {
+    if (parsedFoods.length > 0 && parsedFoodsFromParse) {
       lookupAll(parsedFoods);
     }
     // Only run when parsedFoods changes identity (after a fresh parse)
@@ -93,6 +108,32 @@ export function AiInputSection({ onLogAll, onLogAllLoading }: AiInputSectionProp
         lookupNutrition(food.name, input);
       }
     }
+  };
+
+  const handleEditIngredient = (
+    foodIndex: number,
+    ingIndex: number,
+    current: { quantity: number; unit: string }
+  ) => {
+    const name = parsedFoods[foodIndex]?.ingredients[ingIndex]?.name ?? "";
+    setEditingIngredient({
+      foodIndex,
+      ingIndex,
+      name,
+      quantity: String(current.quantity),
+      unit: current.unit,
+    });
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingIngredient) return;
+    const qty = parseFloat(editingIngredient.quantity);
+    if (isNaN(qty) || qty <= 0) return;
+    updateParsedIngredient(editingIngredient.foodIndex, editingIngredient.ingIndex, {
+      quantity: qty,
+      unit: editingIngredient.unit,
+    });
+    setEditingIngredient(null);
   };
 
   const hasParsedFoods = parsedFoods.length > 0;
@@ -176,6 +217,7 @@ export function AiInputSection({ onLogAll, onLogAllLoading }: AiInputSectionProp
               clarificationResolution={clarificationResolutions[i]}
               onUseGeneric={handleUseGeneric}
               onSubmitClarification={handleSubmitClarification}
+              onEditIngredient={(ingIndex, current) => handleEditIngredient(i, ingIndex, current)}
             />
           ))}
 
@@ -219,6 +261,72 @@ export function AiInputSection({ onLogAll, onLogAllLoading }: AiInputSectionProp
             Enter manually instead
           </button>
         </div>
+      )}
+
+      {/* Edit ingredient dialog */}
+      {editingIngredient && (
+        <Dialog
+          open={true}
+          onClose={() => setEditingIngredient(null)}
+          title={`Edit: ${editingIngredient.name}`}
+        >
+          <div className="space-y-4">
+            <Input
+              label="Quantity"
+              type="number"
+              min="0.01"
+              step="any"
+              value={editingIngredient.quantity}
+              onChange={(e) =>
+                setEditingIngredient((prev) => prev && { ...prev, quantity: e.target.value })
+              }
+            />
+            <div className="flex flex-col gap-1.5">
+              <label
+                className="text-sm font-medium"
+                style={{ color: "var(--text-secondary)" }}
+              >
+                Unit
+              </label>
+              <select
+                value={editingIngredient.unit}
+                onChange={(e) =>
+                  setEditingIngredient((prev) => prev && { ...prev, unit: e.target.value })
+                }
+                className="rounded-sm border px-3 py-2 text-sm outline-none transition-colors focus:border-primary focus:ring-1 focus:ring-primary"
+                style={{
+                  backgroundColor: "var(--bg-surface)",
+                  borderColor: "var(--border-outline)",
+                  color: "var(--text-primary)",
+                }}
+              >
+                {["g", "serving", "tsp", "tbsp", "cup", "ml", "piece", "slice", "bowl"].map((u) => (
+                  <option key={u} value={u}>{u}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={() => setEditingIngredient(null)}
+                className="flex-1 rounded-lg border px-4 py-2 text-sm font-medium transition-colors"
+                style={{
+                  borderColor: "var(--border-outline)",
+                  color: "var(--text-secondary)",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveEdit}
+                disabled={!editingIngredient.quantity || parseFloat(editingIngredient.quantity) <= 0}
+                className="flex-1 rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors disabled:opacity-40"
+                style={{ backgroundColor: "var(--color-primary)" }}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </Dialog>
       )}
     </div>
   );

@@ -78,6 +78,26 @@ class IngredientListDelegate(
     }
 
     /**
+     * Updates the quantity and unit of a single ingredient in-place.
+     * Does NOT touch catalog matches or nutrition lookups — those remain valid
+     * since they are keyed by food name, not quantity/unit.
+     */
+    fun updateParsedIngredient(foodIndex: Int, ingredientIndex: Int, quantity: Double, unit: String) {
+        uiState.update { state ->
+            val foods = state.parsedFoods.toMutableList()
+            val food = foods.getOrNull(foodIndex) ?: return@update state
+            val ingredients = food.ingredients.toMutableList()
+            if (ingredientIndex !in ingredients.indices) return@update state
+            ingredients[ingredientIndex] = ingredients[ingredientIndex].copy(
+                quantity = quantity,
+                unit = unit
+            )
+            foods[foodIndex] = food.copy(ingredients = ingredients)
+            state.copy(parsedFoods = foods)
+        }
+    }
+
+    /**
      * Move an ingredient one position up (towards index 0) within its recipe card.
      * No-op if already the first ingredient.
      */

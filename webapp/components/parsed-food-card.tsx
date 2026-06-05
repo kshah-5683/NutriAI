@@ -17,6 +17,11 @@ interface ParsedFoodCardProps {
   onUseGeneric: (index: number) => void;
   /** Called when user submits brand or weight clarification */
   onSubmitClarification: (index: number, input: string) => void;
+  /**
+   * Called when the user taps the pencil icon on an ingredient row.
+   * Only relevant for recipe cards (food.isRecipe === true).
+   */
+  onEditIngredient?: (ingIndex: number, current: { quantity: number; unit: string }) => void;
 }
 
 /**
@@ -35,6 +40,7 @@ export function ParsedFoodCard({
   clarificationResolution,
   onUseGeneric,
   onSubmitClarification,
+  onEditIngredient,
 }: ParsedFoodCardProps) {
   const hasCatalogMatch = food.catalogMatch?.isFromCatalog === true;
   const needsClarification = food.needsClarification && !hasCatalogMatch;
@@ -162,11 +168,24 @@ export function ParsedFoodCard({
             {food.ingredients.map((ing, i) => (
               <div key={i} className="flex items-center gap-2 text-xs" style={{ color: isSelected ? "var(--text-on-primary-container)" : "var(--text-secondary)" }}>
                 <span>·</span>
-                <span>
+                <span className="flex-1">
                   {ing.name} — {ing.quantity} {ing.unit}
                 </span>
                 {ing.catalogMatch?.isFromCatalog && (
                   <span className="text-xs" style={{ color: "var(--color-primary)" }}>✅</span>
+                )}
+                {onEditIngredient && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEditIngredient(i, { quantity: ing.quantity, unit: ing.unit });
+                    }}
+                    className="rounded p-0.5 opacity-60 hover:opacity-100 transition-opacity"
+                    style={{ color: isSelected ? "var(--text-on-primary-container)" : "var(--text-secondary)" }}
+                    title="Edit quantity / unit"
+                  >
+                    ✏️
+                  </button>
                 )}
               </div>
             ))}
