@@ -32,6 +32,7 @@
 - [Phase 18: Edit Log Macro Scaling Guard — Gram ↔ Non-Gram Boundary](#phase-18-edit-log-macro-scaling-guard--gram--non-gram-boundary)
 - [Phase 19: Catalog Re-Log Macro Fix — Per-100g De-Normalization](#phase-19-catalog-re-log-macro-fix--per-100g-de-normalization)
 - [Phase 20: AI Migration — Direct Gemini → Shared Supabase Edge Functions](#phase-20-ai-migration--direct-gemini--shared-supabase-edge-functions)
+- [Phase 21: Ingredient Inline Edit — AI Parsed Mode](#phase-21-ingredient-inline-edit--ai-parsed-mode)
 - [Architecture Decisions](#architecture-decisions)
 - [Known Issues & Tech Debt](#known-issues--tech-debt)
 
@@ -2527,6 +2528,97 @@ if (food.edgeCatalogMatch?.isFromCatalog == true) {
 | 81 | Keep `ResolveCatalogCacheUseCase` as fallback | Edge Functions pre-resolve catalog matches using cloud data, but the user's local Room DB may have items not yet synced. The local fallback ensures catalog hits for offline-created items. |
 | 82 | Pre-compute per-100g values in `scan-label` Edge Function | Eliminates duplicated per-serving→per-100g conversion logic on each client. The Edge Function returns both raw and normalized values; Android uses the pre-computed ones directly. |
 | 83 | Remove `GEMINI_API_KEY` from Android build | The API key is no longer needed client-side — all AI calls go through Supabase Edge Functions which hold the key server-side. Eliminates client-side key exposure risk. |
+
+---
+
+## Phase 21: Ingredient Inline Edit — AI Parsed Mode
+
+**Status:** ✅ Completed
+**Date:** June 6, 2026
+
+### Summary
+
+Users can now edit an ingredient's quantity and unit directly inside a recipe card in AI parsed mode via a pencil icon button in each `IngredientRow`. Tapping the pencil opens an `AlertDialog` pre-filled with the ingredient's current quantity and unit. Saving patches the ingredient in `parsedFoods` in-place without breaking it out of the recipe. When "Log All" fires, the corrected values flow through the existing `acceptAndLogAllParsed()` paths automatically.
+
+Cross-platform parity with webapp Phase W17.
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `presentation/screens/log/IngredientListDelegate.kt` | Updated | Added `updateParsedIngredient(foodIndex, ingredientIndex, quantity, unit)` — patches a single ingredient's `quantity` and `unit` in-place. Does **not** touch `ingredientCatalogMatches` or `ingredientNutritionLookups` (keyed by name, still valid). |
+| 2 | `presentation/screens/log/LogViewModel.kt` | Updated | Added `EditingIngredientState` data class inside `LogUiState` companion. Added `editingIngredient: EditingIngredientState? = null` to `LogUiState`. Added `updateParsedIngredient()` delegate method. Added `beginEditIngredient()`, `dismissEditIngredient()`, `confirmEditIngredient()` in `LogViewModel`. |
+| 3 | `presentation/screens/log/LogScreen.kt` | Updated | Added `AlertDialog` and `TextButton` imports. Added `onEditIngredient`, `onDismissEditIngredient`, `onConfirmEditIngredient` params to `AiInputSection`. Added edit `IconButton` (pencil) to `IngredientRow`. Added `onEdit` param to `IngredientRow`. Added `AlertDialog` at end of `AiInputSection` driven by `uiState.editingIngredient` with qty `OutlinedTextField` + unit `DropdownMenu`. Wired all three callbacks from the `LogScreen` call site via `viewModel::beginEditIngredient`, `viewModel::dismissEditIngredient`, `viewModel::confirmEditIngredient`. |
+
+### Key Implementation Details
+
+**`IngredientListDelegate.updateParsedIngredient()`:**
+```kotlin
+fun updateParsedIngredient(foodIndex: Int, ingredientIndex: Int, quantity: Double, unit: String) {
+    uiState.update { state ->
+        val foods = state.parsedFoods.toMutableList()
+        val food = foods.getOrNull(foodIndex) ?: return@update state
+        val ingredients = food.ingredients.toMutableList()
+        if (ingredientIndex !in ingredients.indices) return@update state
+        ingredients[ingredientIndex] = ingredients[ingredientIndex].copy(quantity = quantity, unit = unit)
+        foods[foodIndex] = food.copy(ingredients = ingredients)
+        state.copy(parsedFoods = foods)
+    }
+}
+```
+
+**`LogUiState.EditingIngredientState`:**
+```kotlin
+data class EditingIngredientState(
+    val foodIndex: Int,
+    val ingredientIndex: Int,
+    val name: String,
+    val quantity: String,   // bound to OutlinedTextField
+    val unit: String        // bound to DropdownMenu
+)
+```
+
+**AlertDialog in `AiInputSection` (driven by ViewModel state):**
+```kotlin
+val editing = uiState.editingIngredient
+if (editing != null) {
+    var localQty by remember(editing.foodIndex, editing.ingredientIndex) { mutableStateOf(editing.quantity) }
+    var localUnit by remember(editing.foodIndex, editing.ingredientIndex) { mutableStateOf(editing.unit) }
+    AlertDialog(
+        onDismissRequest = onDismissEditIngredient,
+        title = { Text("Edit: ${editing.name}") },
+        text = {
+            // OutlinedTextField for qty + Box/DropdownMenu for unit
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirmEditIngredient(localQty, localUnit) },
+                enabled = localQty.toDoubleOrNull()?.let { it > 0 } == true
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismissEditIngredient) { Text("Cancel") } }
+    )
+}
+```
+
+**`confirmEditIngredient()` validation:**
+```kotlin
+fun confirmEditIngredient(quantity: String, unit: String) {
+    val editing = _uiState.value.editingIngredient ?: return
+    val qty = quantity.toDoubleOrNull()?.takeIf { it > 0 } ?: return  // silent no-op on bad input
+    updateParsedIngredient(editing.foodIndex, editing.ingredientIndex, qty, unit)
+    dismissEditIngredient()
+}
+```
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| 84 | `EditingIngredientState` in `LogUiState`, not in local Compose `remember` | Android dialogs must survive configuration changes (rotation). Storing dialog state in the ViewModel `StateFlow` ensures the `AlertDialog` re-opens correctly after a configuration change, unlike local `remember { mutableStateOf }` which is destroyed and recreated. |
+| 85 | Dialog text field state uses `remember(editing.foodIndex, editing.ingredientIndex)` | Using the ingredient indices as `remember` keys resets the local qty/unit text state when a different ingredient is opened for editing. Without keys, the stale values from the previous edit would persist. |
+| 86 | `updateParsedIngredient` does NOT clear catalog matches or nutrition lookups | Both `ingredientCatalogMatches` and `ingredientNutritionLookups` are keyed by ingredient name, not by quantity/unit. Changing the quantity doesn't invalidate the nutrition data — `acceptAndLogAllParsed()` applies `computeServingMultiplier(newQty, newUnit, ...)` at log time to compute the correct macros. |
+| 87 | Pencil button is separate from `onClick` (ingredient selection) | Tapping an ingredient row highlights it for "Edit Selected" (opens the full manual form). The pencil is a distinct action — inline qty/unit edit without breaking out of the recipe. Separate `onEdit` callback keeps the two paths independent. |
 
 ---
 

@@ -30,6 +30,7 @@
 - [Phase W14: Recommendation Cache Type Safety](#phase-w14-recommendation-cache-type-safety)
 - [Phase W15: AI Parse + Recommendation Quality Improvements](#phase-w15-ai-parse--recommendation-quality-improvements)
 - [Phase W16: Recommendation Macro Accuracy — Server-Side Recalculation](#phase-w16-recommendation-macro-accuracy--server-side-recalculation)
+- [Phase W17: Ingredient Inline Edit — AI Parsed Mode](#phase-w17-ingredient-inline-edit--ai-parsed-mode)
 - [Architecture Decisions](#architecture-decisions)
 - [Known Issues & Tech Debt](#known-issues--tech-debt)
 
@@ -1594,6 +1595,77 @@ The recommendation flow had no equivalent server-side interception — this phas
 |---|----------|-----------|
 | W61 | Recompute catalog recommendation macros in Edge Function code, not in LLM | The DB-fetched `base_*` values are already in memory (from step 3). Trusting the LLM to multiply them correctly is unnecessary risk — LLMs can produce floating-point errors, hallucinate, or round inconsistently. Code multiplication is deterministic and free (zero extra DB calls). |
 | W62 | Keep AI macro estimates for `source="internet"` items | There is no database source of truth for internet recipe suggestions. The AI's estimate based on the recipe_text ingredient list is the only available signal. The estimate is approximate by nature and clearly displayed as such in the UI. |
+
+---
+
+## Phase W17: Ingredient Inline Edit — AI Parsed Mode
+
+**Status:** ✅ Completed
+**Date:** June 6, 2026
+
+### Summary
+
+Users can now edit an ingredient's quantity and unit directly inside a recipe card in AI parsed mode, without breaking it out of the recipe. Previously the only option was "Edit Selected" which opened the full manual form, removing the ingredient from its recipe context and preventing it from being logged as part of the dish.
+
+A pencil icon on each ingredient row opens a small `<Dialog>` modal with a quantity number input and a unit `<select>`. Saving patches the ingredient in `parsedFoods` via a new `updateParsedIngredient` Zustand action. When "Log All" fires, the corrected values flow through the existing `handleLogAll` / `acceptAndLogAllParsed` paths automatically — both already read `parsedFoods[i].ingredients[j].quantity` and `.unit`.
+
+Cross-platform parity with Android Phase 21.
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `webapp/lib/stores/log-form-store.ts` | Updated | Added `parsedFoodsFromParse: boolean` state flag. `setParsedFoods()` sets it `true` (fresh parse). New `updateParsedIngredient(foodIndex, ingIndex, patch)` action patches ingredients immutably and sets flag to `false`. |
+| 2 | `webapp/components/parsed-food-card.tsx` | Updated | Added `onEditIngredient?: (ingIndex, current) => void` prop. Each ingredient row gains a `✏️` pencil button that calls the prop with `e.stopPropagation()` to prevent card selection. |
+| 3 | `webapp/components/ai-input-section.tsx` | Updated | Added imports for `useState`, `Dialog`, `Input`. Added `editingIngredient` local state. Guarded the `parsedFoods` `useEffect` with `parsedFoodsFromParse` to prevent redundant nutrition lookups on every edit. Added `handleEditIngredient`, `handleSaveEdit`, and cancel handler. Renders `<Dialog>` with qty number input and unit `<select>` when an ingredient is being edited. |
+
+### Key Implementation Details
+
+**`parsedFoodsFromParse` guard prevents re-firing nutrition lookups on edit:**
+
+```typescript
+// log-form-store.ts
+setParsedFoods: (foods) => set({ parsedFoods: foods, parsedFoodsFromParse: true, ... }),
+updateParsedIngredient: (foodIndex, ingIndex, patch) =>
+  set((state) => {
+    // ... immutable patch ...
+    return { parsedFoods: foods, parsedFoodsFromParse: false };
+  }),
+
+// ai-input-section.tsx
+useEffect(() => {
+  if (parsedFoods.length > 0 && parsedFoodsFromParse) {
+    lookupAll(parsedFoods);  // only fires on fresh parse, not on edits
+  }
+}, [parsedFoods]);
+```
+
+**Dialog with qty and unit fields:**
+
+```tsx
+<Dialog open={true} onClose={() => setEditingIngredient(null)} title={`Edit: ${editingIngredient.name}`}>
+  <Input label="Quantity" type="number" value={editingIngredient.quantity} onChange={...} />
+  <select value={editingIngredient.unit} onChange={...}>
+    {["g", "serving", "tsp", "tbsp", "cup", "ml", "piece", "slice", "bowl"].map(...)}
+  </select>
+  <button onClick={handleSaveEdit} disabled={!qty || qty <= 0}>Save</button>
+  <button onClick={() => setEditingIngredient(null)}>Cancel</button>
+</Dialog>
+```
+
+### Dependency Risk Addressed
+
+| Risk | Mitigation |
+|------|-----------|
+| `useEffect` re-fires nutrition lookups on every edit (new `parsedFoods` reference from Zustand immutable update) | `parsedFoodsFromParse` flag — set `true` only by `setParsedFoods`, set `false` by `updateParsedIngredient`. Effect guards on `parsedFoodsFromParse && parsedFoods.length > 0`. |
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| W63 | `parsedFoodsFromParse` flag over separate `parsedFoodsForEdit` copy | A separate copy would require keeping two arrays in sync. A boolean flag adds minimal state and cleanly separates "parse-triggered" vs "edit-triggered" reference changes without duplicating data. |
+| W64 | Edit dialog local state (not Zustand) | The edit dialog is ephemeral — transient form text that doesn't need to survive tab switches or be read by any other component. Local `useState` is simpler and avoids Zustand actions for every keypress. Android uses ViewModel state because the dialog must survive configuration changes; the webapp does not have that constraint. |
+| W65 | `e.stopPropagation()` on pencil button click | The ingredient row lives inside the recipe card's `onClick` handler. Without stopping propagation, clicking the pencil would simultaneously select the card, which is distracting. Stopping propagation keeps the edit intent isolated. |
 
 ---
 
