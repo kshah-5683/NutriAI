@@ -282,6 +282,44 @@ export const useLogFormStore = create<LogFormState>((set, get) => ({
     const food = state.parsedFoods[index];
     if (!food) return;
 
+    // Recipe: open Manual > Recipe mode with ingredients pre-filled from lookup results
+    if (food.isRecipe) {
+      const recipeIngredients: ManualRecipeIngredient[] = food.ingredients.map((ing) => {
+        const nutrition = state.nutritionResults[ing.name] ?? null;
+        const catalogItem = ing.catalogMatch?.isFromCatalog ? ing.catalogMatch.foodItem : null;
+        return {
+          id: Math.random().toString(36).slice(2),
+          catalogItem: catalogItem ?? null,
+          customName: catalogItem ? catalogItem.name : ing.name,
+          quantity: String(ing.quantity),
+          unit: ing.unit,
+          calories: catalogItem
+            ? String(catalogItem.baseCalories)
+            : nutrition ? String(Math.round(nutrition.caloriesPer100g * 10) / 10) : "",
+          protein: catalogItem
+            ? String(catalogItem.baseProtein)
+            : nutrition ? String(Math.round(nutrition.proteinPer100g * 10) / 10) : "",
+          carbs: catalogItem
+            ? String(catalogItem.baseCarbs)
+            : nutrition ? String(Math.round(nutrition.carbsPer100g * 10) / 10) : "",
+          fat: catalogItem
+            ? String(catalogItem.baseFat)
+            : nutrition ? String(Math.round(nutrition.fatPer100g * 10) / 10) : "",
+        };
+      });
+      // Trailing empty row so user can add more ingredients
+      recipeIngredients.push(createEmptyIngredient());
+      set({
+        inputMode: "manual",
+        isRecipeMode: true,
+        recipeName: food.name,
+        recipeQuantity: String(food.quantity),
+        recipeUnit: food.unit,
+        recipeIngredients,
+      });
+      return;
+    }
+
     const nutrition = state.nutritionResults[food.name] ?? null;
     const catalogItem = food.catalogMatch?.isFromCatalog ? food.catalogMatch.foodItem : null;
 

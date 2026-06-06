@@ -31,6 +31,7 @@
 - [Phase W15: AI Parse + Recommendation Quality Improvements](#phase-w15-ai-parse--recommendation-quality-improvements)
 - [Phase W16: Recommendation Macro Accuracy — Server-Side Recalculation](#phase-w16-recommendation-macro-accuracy--server-side-recalculation)
 - [Phase W17: Ingredient Inline Edit — AI Parsed Mode](#phase-w17-ingredient-inline-edit--ai-parsed-mode)
+- [Phase W18: Recipe Card Nutrition Display + Edit Selected Recipe Fix](#phase-w18-recipe-card-nutrition-display--edit-selected-recipe-fix)
 - [Architecture Decisions](#architecture-decisions)
 - [Known Issues & Tech Debt](#known-issues--tech-debt)
 
@@ -1666,6 +1667,110 @@ useEffect(() => {
 | W63 | `parsedFoodsFromParse` flag over separate `parsedFoodsForEdit` copy | A separate copy would require keeping two arrays in sync. A boolean flag adds minimal state and cleanly separates "parse-triggered" vs "edit-triggered" reference changes without duplicating data. |
 | W64 | Edit dialog local state (not Zustand) | The edit dialog is ephemeral — transient form text that doesn't need to survive tab switches or be read by any other component. Local `useState` is simpler and avoids Zustand actions for every keypress. Android uses ViewModel state because the dialog must survive configuration changes; the webapp does not have that constraint. |
 | W65 | `e.stopPropagation()` on pencil button click | The ingredient row lives inside the recipe card's `onClick` handler. Without stopping propagation, clicking the pencil would simultaneously select the card, which is distracting. Stopping propagation keeps the edit intent isolated. |
+
+---
+
+## Phase W18: Recipe Card Nutrition Display + Edit Selected Recipe Fix
+
+**Status:** ✅ Completed
+**Date:** June 6, 2026
+
+### Summary
+
+Fixed two bugs affecting recipe cards in AI parsed mode:
+
+1. **Recipe card showed "No nutrition data found"** — The card received `nutritionResults["banana smoothie"]` which is always `null` because `lookupAll()` correctly skips recipe-level name lookups (Phase W15). The fix computes a recipe total from per-ingredient nutrition results and displays `~N kcal · Xg P · Yg C · Zg F` below the ingredient list. While ingredient lookups are in-flight it shows "Looking up ingredients…".
+
+2. **"Edit Selected" opened flat Manual form for recipes** — `acceptParsedFood()` had no recipe branch. Accepting a recipe card always opened Manual > Ingredient mode with the recipe title as `foodName`, discarding the ingredient structure. The fix adds a recipe branch: detects `food.isRecipe`, builds `recipeIngredients` from `food.ingredients` pre-filled with nutrition results and catalog matches, and opens Manual > Recipe mode.
+
+Cross-platform parity with Android Phase 22.
+
+### Bug Reproduction
+
+**Bug 1:**
+1. Type "banana smoothie (50g banana, 100g milk, 50g yogurt)" → Parse
+2. Ingredient lookups complete — per-ingredient badges show data
+3. **Before fix:** Recipe card shows "⚪ No nutrition data found"
+4. **After fix:** Card shows "~245 kcal · 8.2g P · 42.1g C · 4.3g F"
+
+**Bug 2:**
+1. Parse "banana smoothie" → recipe card appears → select card → "✏️ Edit Selected"
+2. **Before fix:** Manual form opens flat with "banana smoothie" as food name, Ingredient mode
+3. **After fix:** Manual form opens in Recipe mode with all ingredients pre-filled
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `webapp/components/parsed-food-card.tsx` | Updated | Added `ingredientNutritionResults?: Record<string, NutritionInfo \| null \| undefined>` and `ingredientNutritionLoading?: Record<string, boolean>` props. Added recipe total computation using `computeServingMultiplier` over catalog items (priority 1) and `NutritionInfo` results (priority 2). Replaced unconditional "No nutrition data found" (which was always shown for recipes) with recipe-aware display: "Looking up ingredients…" → computed total → "No ingredient nutrition found". |
+| 2 | `webapp/lib/stores/log-form-store.ts` | Updated | `acceptParsedFood()`: Added recipe branch at the top — when `food.isRecipe`, maps `food.ingredients` to `ManualRecipeIngredient` objects pre-filled from `nutritionResults` (per-100g) or catalog items. Appends a trailing empty row. Sets `inputMode: "manual"`, `isRecipeMode: true`, `recipeName`, `recipeQuantity`, `recipeUnit`, `recipeIngredients` and returns early. Non-recipe path unchanged. |
+| 3 | `webapp/components/ai-input-section.tsx` | Updated | Passes `ingredientNutritionResults={food.isRecipe ? nutritionResults : undefined}` and `ingredientNutritionLoading={food.isRecipe ? nutritionLoading : undefined}` to `ParsedFoodCard`. Non-recipe cards receive `undefined` — no change to their existing behaviour. |
+
+### Key Implementation Details
+
+**Recipe total computation in `ParsedFoodCard`:**
+```tsx
+const anyIngredientLoading = food.isRecipe && food.ingredients.some(
+  (ing) => !ing.catalogMatch?.isFromCatalog && (ingredientNutritionLoading?.[ing.name] ?? false)
+);
+let recipeTotal: { calories: number; protein: number; carbs: number; fat: number } | null = null;
+if (food.isRecipe && ingredientNutritionResults) {
+  let totalCal = 0, totalProt = 0, totalCarb = 0, totalFat = 0, hasData = false;
+  for (const ing of food.ingredients) {
+    const cat = ing.catalogMatch?.isFromCatalog ? ing.catalogMatch.foodItem : null;
+    const nut = ingredientNutritionResults[ing.name] ?? null;
+    if (cat) {
+      const m = computeServingMultiplier(ing.quantity, ing.unit, cat.baseServingG);
+      totalCal += cat.baseCalories * m; totalProt += cat.baseProtein * m;
+      totalCarb += cat.baseCarbs * m; totalFat += cat.baseFat * m;
+      hasData = true;
+    } else if (nut) {
+      const m = computeServingMultiplier(ing.quantity, ing.unit, nut.servingWeightG ?? undefined);
+      totalCal += nut.caloriesPer100g * m; totalProt += nut.proteinPer100g * m;
+      totalCarb += nut.carbsPer100g * m; totalFat += nut.fatPer100g * m;
+      hasData = true;
+    }
+  }
+  if (hasData) recipeTotal = { calories: Math.round(totalCal), protein: Math.round(totalProt * 10) / 10, carbs: Math.round(totalCarb * 10) / 10, fat: Math.round(totalFat * 10) / 10 };
+}
+```
+
+**Recipe branch in `acceptParsedFood()` (`log-form-store.ts`):**
+```tsx
+if (food.isRecipe) {
+  const recipeIngredients: ManualRecipeIngredient[] = food.ingredients.map((ing) => {
+    const nutrition = state.nutritionResults[ing.name] ?? null;
+    const catalogItem = ing.catalogMatch?.isFromCatalog ? ing.catalogMatch.foodItem : null;
+    return {
+      id: Math.random().toString(36).slice(2),
+      catalogItem: catalogItem ?? null,
+      customName: catalogItem ? catalogItem.name : ing.name,
+      quantity: String(ing.quantity),
+      unit: ing.unit,
+      calories: catalogItem ? String(catalogItem.baseCalories)
+        : nutrition ? String(Math.round(nutrition.caloriesPer100g * 10) / 10) : "",
+      protein:  catalogItem ? String(catalogItem.baseProtein)
+        : nutrition ? String(Math.round(nutrition.proteinPer100g * 10) / 10) : "",
+      carbs:    catalogItem ? String(catalogItem.baseCarbs)
+        : nutrition ? String(Math.round(nutrition.carbsPer100g * 10) / 10) : "",
+      fat:      catalogItem ? String(catalogItem.baseFat)
+        : nutrition ? String(Math.round(nutrition.fatPer100g * 10) / 10) : "",
+    };
+  });
+  recipeIngredients.push(createEmptyIngredient()); // trailing empty row for adding more
+  set({ inputMode: "manual", isRecipeMode: true, recipeName: food.name,
+        recipeQuantity: String(food.quantity), recipeUnit: food.unit, recipeIngredients });
+  return;
+}
+```
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| W66 | Compute recipe total client-side in `ParsedFoodCard` from `ingredientNutritionResults` | The `log-recipe` Edge Function is the authoritative source for final totals at save time. The card-level display is a preview. Computing it from the same `nutritionResults` store that already holds ingredient data costs zero extra API calls and gives immediate feedback as lookups complete progressively. |
+| W67 | Pass `nutritionResults` via props rather than subscribing in `ParsedFoodCard` | `ParsedFoodCard` is a pure display component. Subscribing to Zustand directly inside would couple the card to the store, making it harder to test. `AiInputSection` already owns the subscription and passes the full map as a prop — no architectural change required. |
+| W68 | Recipe branch in `acceptParsedFood()` sets `isRecipeMode: true` and pre-fills ingredients | Opening the flat Manual form for a recipe discards the AI-detected ingredient structure. Pre-filling the Recipe builder preserves the breakdown, lets the user adjust per-ingredient quantities before logging, and correctly routes the save through the `log-recipe` Edge Function path. |
 
 ---
 

@@ -3,6 +3,7 @@
 import type { ParsedFood, NutritionInfo } from "@/lib/types/ai";
 import type { ClarificationResolution } from "@/lib/stores/log-form-store";
 import { ClarificationInput, MatchTypeBadge } from "./clarification-input";
+import { computeServingMultiplier } from "@/lib/utils/macro-calculator";
 
 interface ParsedFoodCardProps {
   food: ParsedFood;
@@ -22,6 +23,10 @@ interface ParsedFoodCardProps {
    * Only relevant for recipe cards (food.isRecipe === true).
    */
   onEditIngredient?: (ingIndex: number, current: { quantity: number; unit: string }) => void;
+  /** Full nutrition results map — used to compute recipe totals from ingredients. */
+  ingredientNutritionResults?: Record<string, NutritionInfo | null | undefined>;
+  /** Nutrition loading states — used to show "looking up" while ingredient lookups are in-flight. */
+  ingredientNutritionLoading?: Record<string, boolean>;
 }
 
 /**
@@ -41,6 +46,8 @@ export function ParsedFoodCard({
   onUseGeneric,
   onSubmitClarification,
   onEditIngredient,
+  ingredientNutritionResults,
+  ingredientNutritionLoading,
 }: ParsedFoodCardProps) {
   const hasCatalogMatch = food.catalogMatch?.isFromCatalog === true;
   const needsClarification = food.needsClarification && !hasCatalogMatch;
@@ -51,6 +58,38 @@ export function ParsedFoodCard({
   const brandNotFound =
     clarificationResolution?.type === "brand" &&
     nutritionInfo?.matchType === "generic";
+
+  // Recipe total — computed from per-ingredient nutrition results
+  const anyIngredientLoading = food.isRecipe && food.ingredients.some(
+    (ing) => !ing.catalogMatch?.isFromCatalog && (ingredientNutritionLoading?.[ing.name] ?? false)
+  );
+  let recipeTotal: { calories: number; protein: number; carbs: number; fat: number } | null = null;
+  if (food.isRecipe && ingredientNutritionResults) {
+    let totalCal = 0, totalProt = 0, totalCarb = 0, totalFat = 0, hasData = false;
+    for (const ing of food.ingredients) {
+      const cat = ing.catalogMatch?.isFromCatalog ? ing.catalogMatch.foodItem : null;
+      const nut = ingredientNutritionResults[ing.name] ?? null;
+      if (cat) {
+        const m = computeServingMultiplier(ing.quantity, ing.unit, cat.baseServingG);
+        totalCal += cat.baseCalories * m; totalProt += cat.baseProtein * m;
+        totalCarb += cat.baseCarbs * m; totalFat += cat.baseFat * m;
+        hasData = true;
+      } else if (nut) {
+        const m = computeServingMultiplier(ing.quantity, ing.unit, nut.servingWeightG ?? undefined);
+        totalCal += nut.caloriesPer100g * m; totalProt += nut.proteinPer100g * m;
+        totalCarb += nut.carbsPer100g * m; totalFat += nut.fatPer100g * m;
+        hasData = true;
+      }
+    }
+    if (hasData) {
+      recipeTotal = {
+        calories: Math.round(totalCal),
+        protein: Math.round(totalProt * 10) / 10,
+        carbs: Math.round(totalCarb * 10) / 10,
+        fat: Math.round(totalFat * 10) / 10,
+      };
+    }
+  }
 
   return (
     <div
@@ -132,8 +171,8 @@ export function ParsedFoodCard({
         </div>
       )}
 
-      {/* Nutrition status */}
-      {!hasCatalogMatch && !showClarificationBanner && (
+      {/* Nutrition status — non-recipe items only; recipes show totals below ingredient list */}
+      {!food.isRecipe && !hasCatalogMatch && !showClarificationBanner && (
         <div className="mt-2 text-xs" style={{ color: isSelected ? "var(--text-on-primary-container)" : "var(--text-secondary)" }}>
           {nutritionLoading ? (
             <span className="flex items-center gap-1">
@@ -190,6 +229,23 @@ export function ParsedFoodCard({
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Recipe total — summed from ingredient nutrition results */}
+      {food.isRecipe && food.ingredients.length > 0 && (
+        <div className="mt-2 text-xs" style={{ color: isSelected ? "var(--text-on-primary-container)" : "var(--text-secondary)" }}>
+          {anyIngredientLoading ? (
+            <span className="flex items-center gap-1">
+              <LoadingDot /> Looking up ingredients...
+            </span>
+          ) : recipeTotal ? (
+            <span style={{ color: isSelected ? "var(--text-on-primary-container)" : "var(--text-branded)" }}>
+              ~{recipeTotal.calories} kcal · {recipeTotal.protein}g P · {recipeTotal.carbs}g C · {recipeTotal.fat}g F
+            </span>
+          ) : (
+            <span>⚪ No ingredient nutrition found</span>
+          )}
         </div>
       )}
     </div>

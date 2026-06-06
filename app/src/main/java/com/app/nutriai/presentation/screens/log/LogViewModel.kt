@@ -710,6 +710,32 @@ class LogViewModel @Inject constructor(
             }
         }
 
+        // Pre-populate recipe ingredient list when accepting a recipe card (not an individual ingredient)
+        val updatedRecipeIngredients = if (!isEditingIngredient && topLevelFood.isRecipe) {
+            val ingList = topLevelFood.ingredients.mapIndexed { idx, ing ->
+                val key = IngredientKey(state.selectedParsedFoodIndex, idx)
+                val ingNutrition = (state.ingredientNutritionLookups[key] as? NutritionLookupState.Found)?.info
+                val ingCatalogMatches = state.ingredientCatalogMatches[state.selectedParsedFoodIndex]
+                val ingCatalogItem = if (ingCatalogMatches?.getOrNull(idx)?.isFromCatalog == true)
+                    ingCatalogMatches[idx].matchedFoodItem else null
+                ManualRecipeIngredient(
+                    catalogItem = ingCatalogItem,
+                    customName = ingCatalogItem?.name ?: ing.name,
+                    quantity = ing.quantity.formatMacro(),
+                    unit = ing.unit,
+                    calories = ingCatalogItem?.baseCalories?.formatMacro()
+                        ?: ingNutrition?.caloriesPer100g?.formatMacro() ?: "",
+                    protein = ingCatalogItem?.baseProtein?.formatMacro()
+                        ?: ingNutrition?.proteinPer100g?.formatMacro() ?: "",
+                    carbs = ingCatalogItem?.baseCarbs?.formatMacro()
+                        ?: ingNutrition?.carbsPer100g?.formatMacro() ?: "",
+                    fat = ingCatalogItem?.baseFat?.formatMacro()
+                        ?: ingNutrition?.fatPer100g?.formatMacro() ?: "",
+                )
+            }
+            ingList + listOf(ManualRecipeIngredient()) // trailing empty row
+        } else null
+
         _uiState.update {
             it.copy(
                 inputMode = LogInputMode.MANUAL_INPUT,
@@ -734,6 +760,8 @@ class LogViewModel @Inject constructor(
                 // Editing an individual ingredient (isEditingIngredient=true) stays in Ingredients.
                 isLoggingRecipe = !isEditingIngredient &&
                         (topLevelFood.isRecipe || state.recipeOverrides.contains(state.selectedParsedFoodIndex)),
+                // Pre-fill ingredient list when accepting a recipe card
+                manualRecipeIngredients = updatedRecipeIngredients ?: it.manualRecipeIngredients,
                 // Clear selection state
                 aiErrorMessage = null,
                 selectedIngredientIndex = null,

@@ -33,6 +33,7 @@
 - [Phase 19: Catalog Re-Log Macro Fix — Per-100g De-Normalization](#phase-19-catalog-re-log-macro-fix--per-100g-de-normalization)
 - [Phase 20: AI Migration — Direct Gemini → Shared Supabase Edge Functions](#phase-20-ai-migration--direct-gemini--shared-supabase-edge-functions)
 - [Phase 21: Ingredient Inline Edit — AI Parsed Mode](#phase-21-ingredient-inline-edit--ai-parsed-mode)
+- [Phase 22: Recipe Card Nutrition Display + Edit Selected Recipe Fix](#phase-22-recipe-card-nutrition-display--edit-selected-recipe-fix)
 - [Architecture Decisions](#architecture-decisions)
 - [Known Issues & Tech Debt](#known-issues--tech-debt)
 
@@ -2619,6 +2620,114 @@ fun confirmEditIngredient(quantity: String, unit: String) {
 | 85 | Dialog text field state uses `remember(editing.foodIndex, editing.ingredientIndex)` | Using the ingredient indices as `remember` keys resets the local qty/unit text state when a different ingredient is opened for editing. Without keys, the stale values from the previous edit would persist. |
 | 86 | `updateParsedIngredient` does NOT clear catalog matches or nutrition lookups | Both `ingredientCatalogMatches` and `ingredientNutritionLookups` are keyed by ingredient name, not by quantity/unit. Changing the quantity doesn't invalidate the nutrition data — `acceptAndLogAllParsed()` applies `computeServingMultiplier(newQty, newUnit, ...)` at log time to compute the correct macros. |
 | 87 | Pencil button is separate from `onClick` (ingredient selection) | Tapping an ingredient row highlights it for "Edit Selected" (opens the full manual form). The pencil is a distinct action — inline qty/unit edit without breaking out of the recipe. Separate `onEdit` callback keeps the two paths independent. |
+
+---
+
+## Phase 22: Recipe Card Nutrition Display + Edit Selected Recipe Fix
+
+**Status:** ✅ Completed
+**Date:** June 6, 2026
+
+### Summary
+
+Fixed two bugs affecting recipe cards in AI parsed mode:
+
+1. **Recipe card showed no aggregated nutrition total** — `ParsedFoodCard` displayed ingredient rows but had no recipe-level macro summary. Users had no way to see the expected caloric content of the full dish. Fix: added a recipe total row below the ingredient list, computed from `ingredientNutritionStates` (a `Map<Int, NutritionLookupState>` keyed by ingredient index). Shows "Looking up ingredients…" while any ingredient lookup is `Loading`, then `~N kcal · Xg P · Yg C · Zg F` once resolved.
+
+2. **"Accept" on a recipe card opened flat Manual form** — `acceptParsedFood()` had no recipe branch. Accepting a recipe card set `foodName = topLevelFood.name` and opened flat Ingredient mode, discarding the AI-detected ingredient structure. Fix: when `!isEditingIngredient && topLevelFood.isRecipe`, builds `updatedRecipeIngredients` from each ingredient's `ingredientNutritionLookups` / `ingredientCatalogMatches`, sets `isLoggingRecipe = true`, and pre-populates `manualRecipeIngredients`.
+
+Cross-platform parity with webapp Phase W18.
+
+### Bug Reproduction
+
+**Bug 1:**
+1. Type "banana smoothie (50g banana, 100g milk, 50g yogurt)" → Parse with AI
+2. Ingredient nutrition lookups complete
+3. **Before fix:** Recipe card shows ingredient rows only — no total kcal displayed
+4. **After fix:** Shows "~245 kcal · 8.2g P · 42.1g C · 4.3g F" below ingredients
+
+**Bug 2:**
+1. Parse "banana smoothie" → recipe card appears → select card → tap "Accept"
+2. **Before fix:** Manual form opens flat Ingredient mode with "banana smoothie" as food name
+3. **After fix:** Manual form opens Recipe builder mode with ingredients pre-filled
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `presentation/screens/log/LogViewModel.kt` | Updated | `acceptParsedFood()`: Added recipe branch — when `!isEditingIngredient && topLevelFood.isRecipe`, maps each ingredient to `ManualRecipeIngredient` using `IngredientKey(selectedParsedFoodIndex, idx)` to look up `ingredientNutritionLookups` (priority 2) and `ingredientCatalogMatches` (priority 1). Appends a trailing empty `ManualRecipeIngredient()`. State update includes `isLoggingRecipe = true` and `manualRecipeIngredients = updatedRecipeIngredients`. |
+| 2 | `presentation/screens/log/LogScreen.kt` | Updated | `ParsedFoodCard` composable: Added `ingredientNutritionStates: Map<Int, NutritionLookupState> = emptyMap()` parameter. Added recipe total section below ingredient list — if any index is `NutritionLookupState.Loading`, shows "Looking up ingredients…"; otherwise iterates ingredients, reads catalog items (priority 1) or `NutritionLookupState.Found` data (priority 2), applies `UnitConverter.computeServingMultiplier`, and displays aggregated `~N kcal · Xg P · Yg C · Zg F`. At the call site in `AiInputSection`, `ingredientNutritionStates` is built by associating `food.ingredients.indices` to `ingredientNutritionLookups[IngredientKey(index, ingIdx)]` and filtering nulls. |
+
+### Key Implementation Details
+
+**`updatedRecipeIngredients` in `acceptParsedFood()` (`LogViewModel.kt`):**
+```kotlin
+val updatedRecipeIngredients = if (!isEditingIngredient && topLevelFood.isRecipe) {
+    val ingList = topLevelFood.ingredients.mapIndexed { idx, ing ->
+        val key = IngredientKey(state.selectedParsedFoodIndex, idx)
+        val ingNutrition = (state.ingredientNutritionLookups[key] as? NutritionLookupState.Found)?.info
+        val ingCatalogMatches = state.ingredientCatalogMatches[state.selectedParsedFoodIndex]
+        val ingCatalogItem = if (ingCatalogMatches?.getOrNull(idx)?.isFromCatalog == true)
+            ingCatalogMatches[idx].matchedFoodItem else null
+        ManualRecipeIngredient(
+            catalogItem = ingCatalogItem,
+            customName = ingCatalogItem?.name ?: ing.name,
+            quantity = ing.quantity.formatMacro(),
+            unit = ing.unit,
+            calories = ingCatalogItem?.baseCalories?.formatMacro()
+                ?: ingNutrition?.caloriesPer100g?.formatMacro() ?: "",
+            protein  = ingCatalogItem?.baseProtein?.formatMacro()
+                ?: ingNutrition?.proteinPer100g?.formatMacro() ?: "",
+            carbs    = ingCatalogItem?.baseCarbs?.formatMacro()
+                ?: ingNutrition?.carbsPer100g?.formatMacro() ?: "",
+            fat      = ingCatalogItem?.baseFat?.formatMacro()
+                ?: ingNutrition?.fatPer100g?.formatMacro() ?: "",
+        )
+    }
+    ingList + listOf(ManualRecipeIngredient()) // trailing empty row
+} else null
+```
+
+**Recipe total in `ParsedFoodCard` composable (`LogScreen.kt`):**
+```kotlin
+val anyIngLoading = food.ingredients.indices.any { idx ->
+    ingredientNutritionStates[idx] is NutritionLookupState.Loading
+}
+// When not loading — compute totals
+var totalCal = 0.0; var totalProt = 0.0
+var totalCarb = 0.0; var totalFat = 0.0; var hasData = false
+food.ingredients.forEachIndexed { idx, ing ->
+    val catItem = ingredientMatches?.getOrNull(idx)
+        ?.takeIf { it.isFromCatalog }?.matchedFoodItem
+    val nut = (ingredientNutritionStates[idx] as? NutritionLookupState.Found)?.info
+    if (catItem != null) {
+        val m = UnitConverter.computeServingMultiplier(ing.quantity, ing.unit, catItem.baseServingG)
+        totalCal += catItem.baseCalories * m; hasData = true
+    } else if (nut != null) {
+        val m = UnitConverter.computeServingMultiplier(ing.quantity, ing.unit, nut.servingWeightG?.toDouble())
+        totalCal += nut.caloriesPer100g * m; hasData = true
+    }
+}
+// Display: "~N kcal · Xg P · Yg C · Zg F"
+```
+
+**Call-site `ingredientNutritionStates` construction (in `AiInputSection`):**
+```kotlin
+val ingredientNutritionStates = if (food.isRecipe) {
+    food.ingredients.indices.associate { ingIdx ->
+        ingIdx to uiState.ingredientNutritionLookups[IngredientKey(index, ingIdx)]
+    }.filterValues { it != null }
+        .mapValues { it.value!! }
+} else emptyMap()
+```
+
+### Architecture Decisions Added
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| 88 | Build `ingredientNutritionStates` at the `AiInputSection` call site, not inside `ParsedFoodCard` | `ParsedFoodCard` is a stateless composable that receives data as parameters. Reading `LogViewModel` state directly inside would violate the composable's separation of concerns and break `@Preview` support. Building the map at the call site keeps the composable testable and consistent with the existing `catalogMatch` / `ingredientMatches` pattern. |
+| 89 | Recipe total uses the same `UnitConverter.computeServingMultiplier` as the save path | Consistency between the preview total and the saved log total is critical. Using the same conversion function ensures that what the user sees in the card (~N kcal) matches what `LogFoodUseCase.logRecipe()` will compute when they tap "Log All". |
+| 90 | Pre-fill `manualRecipeIngredients` from `acceptParsedFood()` recipe branch | Opening the flat Manual form for a recipe discards the AI-detected ingredient structure and routes the save through the single-food path instead of `logRecipe()`. Pre-filling the Recipe builder preserves the breakdown, enables the user to adjust per-ingredient quantities, and ensures correct macro aggregation at save time. |
 
 ---
 

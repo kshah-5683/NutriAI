@@ -1141,6 +1141,54 @@ private fun ParsedFoodCard(
                         modifier = Modifier.padding(start = 20.dp)
                     )
                 }
+
+                // Recipe total — summed from per-ingredient nutrition results
+                val anyIngLoading = food.ingredients.indices.any { idx ->
+                    ingredientNutritionStates[idx] is NutritionLookupState.Loading
+                }
+                if (anyIngLoading) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Looking up ingredients…",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isSelected)
+                            MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                        else
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
+                } else {
+                    var totalCal = 0.0; var totalProt = 0.0
+                    var totalCarb = 0.0; var totalFat = 0.0; var hasData = false
+                    food.ingredients.forEachIndexed { idx, ing ->
+                        val catItem = ingredientMatches?.getOrNull(idx)
+                            ?.takeIf { it.isFromCatalog }?.matchedFoodItem
+                        val nut = (ingredientNutritionStates[idx] as? NutritionLookupState.Found)?.info
+                        if (catItem != null) {
+                            val m = UnitConverter.computeServingMultiplier(ing.quantity, ing.unit, catItem.baseServingG)
+                            totalCal += catItem.baseCalories * m; totalProt += catItem.baseProtein * m
+                            totalCarb += catItem.baseCarbs * m; totalFat += catItem.baseFat * m
+                            hasData = true
+                        } else if (nut != null) {
+                            val m = UnitConverter.computeServingMultiplier(ing.quantity, ing.unit, nut.servingWeightG?.toDouble())
+                            totalCal += nut.caloriesPer100g * m; totalProt += nut.proteinPer100g * m
+                            totalCarb += nut.carbsPer100g * m; totalFat += nut.fatPer100g * m
+                            hasData = true
+                        }
+                    }
+                    if (hasData) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "~${totalCal.roundToInt()} kcal · ${(totalProt * 10).roundToInt() / 10.0}g P · ${(totalCarb * 10).roundToInt() / 10.0}g C · ${(totalFat * 10).roundToInt() / 10.0}g F",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isSelected)
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            else
+                                MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(start = 4.dp)
+                        )
+                    }
+                }
             }
         }
     }

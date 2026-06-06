@@ -218,6 +218,8 @@ export function AiInputSection({ onLogAll, onLogAllLoading }: AiInputSectionProp
               onUseGeneric={handleUseGeneric}
               onSubmitClarification={handleSubmitClarification}
               onEditIngredient={(ingIndex, current) => handleEditIngredient(i, ingIndex, current)}
+              ingredientNutritionResults={food.isRecipe ? nutritionResults : undefined}
+              ingredientNutritionLoading={food.isRecipe ? nutritionLoading : undefined}
             />
           ))}
 
