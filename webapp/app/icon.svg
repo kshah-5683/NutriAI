@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <!-- Rounded background matching Android app icon color #2D5A27 -->
+  <rect width="108" height="108" rx="24" fill="#2D5A27"/>
+  <!-- Leaf/nutrition icon - white leaf shape -->
+  <path fill="#FFFFFF" d="M54,28C54,28 38,40 38,58C38,66.84 45.16,74 54,74C62.84,74 70,66.84 70,58C70,40 54,28 54,28Z"/>
+  <!-- Center vein -->
+  <path stroke="#1B5E20" stroke-width="2" stroke-linecap="round" d="M54,38L54,68"/>
+  <!-- Left vein -->
+  <path stroke="#1B5E20" stroke-width="1.5" stroke-linecap="round" d="M54,48L46,54"/>
+  <!-- Right vein -->
+  <path stroke="#1B5E20" stroke-width="1.5" stroke-linecap="round" d="M54,55L62,49"/>
+</svg>

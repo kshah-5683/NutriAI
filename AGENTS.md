@@ -75,7 +75,7 @@ NutriAI/
 
 1. **Centralize Business Logic:** When introducing new algorithms, validation rules, or scaling logic, place them in a **Supabase Edge Function** (`/supabase/functions/`) rather than writing separate implementations in Kotlin and TypeScript.
 2. **Type Safety:** Maintain strict TypeScript typing in `/webapp` and Deno functions. Avoid using `any`.
-3. **Keep Dev Logs Updated:** Document all changes you make.
+3. **Keep Dev Logs Updated (Conditional):** Document changes you make to the development logs **ONLY** when the `update-logs-readme` skill is explicitly called/requested. Otherwise, do not modify these files.
    * Android client changes go into [APP_DEVLOG.md](file:///C:/Users/Khushi%20Shah/Documents/GitHub/NutriAI/APP_DEVLOG.md).
    * Web client changes go into [WEBAPP_DEVLOG.md](file:///C:/Users/Khushi%20Shah/Documents/GitHub/NutriAI/WEBAPP_DEVLOG.md).
 4. **Row-Level Security (RLS):** Ensure any schema migrations targeting user data have corresponding RLS policies restricting operations to the authenticated user owning the record (`auth.uid()`).
