@@ -1,36 +1,60 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# NutriAI Web Companion Application (`webapp/`)
 
-## Getting Started
+This directory houses the frontend web application of the NutriAI platform, built as a companion to the Android client.
 
-First, run the development server:
+## 🎯 Major Function & Purpose
 
+The `webapp` is a Next.js 14 web application designed as an online-first companion to the core Android application. It allows users to log and parse food items via natural language processing, scan food labels using vision models, track calorie and macro target goals in a daily diary, and view interactive trend reports. It communicates directly with the shared PostgreSQL backend and invokes centralized Supabase Edge Functions for business logic validation.
+
+---
+
+## 📂 Project Structure
+
+### Subdirectories
+* **[`app/`](file:///C:/Users/Khushi%20Shah/Documents/GitHub/NutriAI/webapp/app)**: Next.js App Router routing segments, layouts, and page views.
+* **[`components/`](file:///C:/Users/Khushi%20Shah/Documents/GitHub/NutriAI/webapp/components)**: Reusable React visual elements, layout wrappers, charts, and dashboard views.
+* **[`lib/`](file:///C:/Users/Khushi%20Shah/Documents/GitHub/NutriAI/webapp/lib)**: State stores, React Hooks, Supabase setups, TypeScript types, and general utility functions.
+* **[`public/`](file:///C:/Users/Khushi%20Shah/Documents/GitHub/NutriAI/webapp/public)**: Statically served vectors and logo graphics.
+
+### Configuration & Tooling Files
+* **[`next.config.ts`](file:///C:/Users/Khushi%20Shah/Documents/GitHub/NutriAI/webapp/next.config.ts)**: Configures Next.js parameters, bundler externals, and server settings.
+* **[`instrumentation.ts`](file:///C:/Users/Khushi%20Shah/Documents/GitHub/NutriAI/webapp/instrumentation.ts)**: Configures proxy connections on start-up.
+* **[`proxy.ts`](file:///C:/Users/Khushi%20Shah/Documents/GitHub/NutriAI/webapp/proxy.ts)**: Local developer utility supporting proxy requests.
+* **[`package.json`](file:///C:/Users/Khushi%20Shah/Documents/GitHub/NutriAI/webapp/package.json)**: Declares application metadata, package dependency definitions, and terminal run scripts.
+* **[`tsconfig.json`](file:///C:/Users/Khushi%20Shah/Documents/GitHub/NutriAI/webapp/tsconfig.json)**: Custom compiler configurations for TypeScript.
+* **[`postcss.config.mjs`](file:///C:/Users/Khushi%20Shah/Documents/GitHub/NutriAI/webapp/postcss.config.mjs)**: Layout styling parameters for PostCSS.
+* **[`AGENTS.md`](file:///C:/Users/Khushi%20Shah/Documents/GitHub/NutriAI/webapp/AGENTS.md)**: Workspace instruction overrides for developer agents working on web layouts.
+* **[`CLAUDE.md`](file:///C:/Users/Khushi%20Shah/Documents/GitHub/NutriAI/webapp/CLAUDE.md)**: System load directive referencing agent configurations.
+
+---
+
+## 🧑‍💻 Setup & Dev Commands
+
+### 1. Install Dependencies
 ```bash
-npm run dev
+npm install
 # or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+bun install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 2. Start Local Development Server
+```bash
+npm run dev
+# runs on http://localhost:3000
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 3. Build Production Bundle
+```bash
+npm run build
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+---
 
-## Learn More
+## 🔌 Core Tech Stack & Dependencies
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+* **Framework**: Next.js 14 (App Router)
+* **Styling**: Tailwind CSS v4
+* **Query & Cache Engine**: TanStack Query v5
+* **Client State Management**: Zustand
+* **Interactive Charts**: Recharts
+* **Backend Database Client**: Supabase Client SDK (`@supabase/supabase-js`, `@supabase/ssr`)

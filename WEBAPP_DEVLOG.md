@@ -1774,4 +1774,58 @@ if (food.isRecipe) {
 
 ---
 
+## Phase W19: Unit Scaling Parity Revisions
+
+**Status:** ✅ Completed
+**Date:** June 7, 2026
+
+### Summary
+
+Aligned the case-matching, pluralization, and spelling mappings of the unit multiplier calculations in the Web client and the Supabase Edge Functions with the Android application's `UnitConverter` logic. This resolves calculation discrepancies that occurred when logging pluralized units (e.g., `teaspoons`, `milliliters`) from Android.
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `webapp/lib/utils/macro-calculator.ts` | Updated | Expanded `computeServingMultiplier` to support plurals and variant spellings for ml, tsp, tbsp, cups, and discrete serving sizes. |
+| 2 | `supabase/functions/_shared/macro-calculator.ts` | Updated | Mirrored the exact same updates to the backend shared utility function. |
+
+---
+
+## Phase W20: Environment Configuration Setup Template
+
+**Status:** ✅ Completed
+**Date:** June 8, 2026
+
+### Summary
+
+Created `.env.example` and `.env.local` in the `webapp` directory to document and specify the required Supabase environment variables needed to build and run the webapp companion application.
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `webapp/.env.example` | Created | Added template defining `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`. |
+| 2 | `webapp/.env.local` | Created | Added local environment file with placeholders for Supabase URL and anon API key. |
+
+---
+
+## Phase W21: Developer Tooling — Logs & READMEs Skill
+
+**Status:** ✅ Completed
+**Date:** June 8, 2026
+
+### Summary
+
+Created a new agent skill `update-logs-readme` to define a playbook for systematically maintaining, formatting, and keeping development logs and directory READMEs up-to-date across the workspace.
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `.agents/skills/update-logs-readme/SKILL.md` | Created | Defined the skill playbook outlining templates, entry structures, and verification check-lists. |
+
+---
+
 *End of Web App Development Log*
+

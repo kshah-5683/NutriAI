@@ -34,24 +34,30 @@ export function computeServingMultiplier(
     case "grams":
     case "ml":
     case "milliliter":
+    case "millilitre":
+    case "milliliters":
+    case "millilitres":
       return quantity / PER_100G_BASE;
     case "tsp":
     case "teaspoon":
+    case "teaspoons":
       return (quantity * 5) / PER_100G_BASE;
     case "tbsp":
     case "tablespoon":
+    case "tablespoons":
       return (quantity * 15) / PER_100G_BASE;
     case "cup":
     case "cups":
       return (quantity * 240) / PER_100G_BASE;
     default:
-      // serving, piece, slice, bowl, unknown — use actual serving weight when available
+      // serving, piece, pieces, slice, slices, bowl, bowls, unknown — use actual serving weight when available
       if (servingWeightG != null && servingWeightG > 0) {
         return (quantity * servingWeightG) / PER_100G_BASE;
       }
       return quantity;
   }
 }
+
 
 /**
  * Returns the scaled macros for a single ingredient row.
