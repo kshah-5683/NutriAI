@@ -30,7 +30,10 @@ class ParseFoodWithAiUseCase @Inject constructor(
      * @param input The user's food description (e.g., "2 eggs and a glass of milk")
      * @return [Resource.Success] with list of [ParsedFood], or [Resource.Error] with message
      */
-    suspend operator fun invoke(input: String): Resource<List<ParsedFood>> {
+    suspend operator fun invoke(
+        input: String,
+        clarificationAnswers: Map<String, String>? = null
+    ): Resource<List<ParsedFood>> {
         // Input validation
         val trimmed = input.trim()
 
@@ -46,6 +49,6 @@ class ParseFoodWithAiUseCase @Inject constructor(
             return Resource.Error("Food description is too long. Please keep it under 500 characters.")
         }
 
-        return aiRepository.parseFood(trimmed)
+        return aiRepository.parseFood(trimmed, clarificationAnswers)
     }
 }

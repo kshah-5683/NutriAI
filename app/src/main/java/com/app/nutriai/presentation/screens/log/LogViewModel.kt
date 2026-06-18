@@ -210,7 +210,11 @@ data class LogUiState(
 
     // -- Ingredient inline edit dialog (AI parsed mode) --
     // Non-null while the edit dialog is open for a specific ingredient.
-    val editingIngredient: EditingIngredientState? = null
+    val editingIngredient: EditingIngredientState? = null,
+
+    // -- Multi-Clarification state (Phase 2) --
+    val multiClarificationAnswers: Map<Int, Map<String, String>> = emptyMap(),
+    val activeClarificationIndices: Map<Int, Int> = emptyMap()
 ) {
     companion object {
         /** Available unit options for the dropdown — kept in sync with webapp UNIT_OPTIONS */
@@ -610,6 +614,91 @@ class LogViewModel @Inject constructor(
         if (catalogMatch?.isFromCatalog != true) {
             viewModelScope.launch {
                 nutritionLookupDelegate.performAndUpdateLookup(index, food.name)
+            }
+        }
+    }
+
+    /**
+     * Submit an answer to a structured clarification question.
+     * Moves to the next question or submits to the server if all are answered.
+     */
+    fun answerClarification(foodIndex: Int, clarificationId: String, answer: String) {
+        val currentAnswers = _uiState.value.multiClarificationAnswers[foodIndex] ?: emptyMap()
+        val updatedAnswers = currentAnswers + (clarificationId to answer)
+
+        _uiState.update {
+            it.copy(
+                multiClarificationAnswers = it.multiClarificationAnswers + (foodIndex to updatedAnswers)
+            )
+        }
+
+        val food = _uiState.value.parsedFoods.getOrNull(foodIndex) ?: return
+        val totalQuestions = food.clarifications?.size ?: 0
+        val currentIndex = _uiState.value.activeClarificationIndices[foodIndex] ?: 0
+
+        if (currentIndex + 1 < totalQuestions) {
+            // Move to the next question in sequence
+            _uiState.update {
+                it.copy(
+                    activeClarificationIndices = it.activeClarificationIndices + (foodIndex to (currentIndex + 1))
+                )
+            }
+        } else {
+            // All questions answered, submit back to the edge function
+            submitMultiClarification(foodIndex)
+        }
+    }
+
+    /**
+     * Submit the collected clarification answers back to the parse-food Edge Function.
+     */
+    private fun submitMultiClarification(foodIndex: Int) {
+        val originalInput = _uiState.value.aiInput
+        val answers = _uiState.value.multiClarificationAnswers[foodIndex] ?: emptyMap()
+
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(isParsing = true, aiErrorMessage = null)
+            }
+
+            when (val result = parseFoodWithAiUseCase(originalInput, answers)) {
+                is Resource.Success -> {
+                    _uiState.update {
+                        it.copy(
+                            isParsing = false,
+                            parsedFoods = result.data,
+                            selectedParsedFoodIndex = 0,
+                            aiErrorMessage = null,
+                            // Clear clarification state for the new result
+                            multiClarificationAnswers = it.multiClarificationAnswers - foodIndex,
+                            activeClarificationIndices = it.activeClarificationIndices - foodIndex
+                        )
+                    }
+                    resolveCatalogCache(result.data)
+                }
+                is Resource.Error -> {
+                    _uiState.update {
+                        it.copy(
+                            isParsing = false,
+                            aiErrorMessage = result.message
+                        )
+                    }
+                }
+                is Resource.Loading -> {}
+            }
+        }
+    }
+
+    /**
+     * Go back to the previous clarification question.
+     */
+    fun previousClarificationQuestion(foodIndex: Int) {
+        val currentIndex = _uiState.value.activeClarificationIndices[foodIndex] ?: 0
+        if (currentIndex > 0) {
+            _uiState.update {
+                it.copy(
+                    activeClarificationIndices = it.activeClarificationIndices + (foodIndex to (currentIndex - 1))
+                )
             }
         }
     }
@@ -1026,6 +1115,8 @@ class LogViewModel @Inject constructor(
                 ingredientNutritionLookups = emptyMap(),
                 recipeOverrides = emptySet(),
                 clarificationResolutions = emptyMap(),
+                multiClarificationAnswers = emptyMap(),
+                activeClarificationIndices = emptyMap(),
                 // Phase 11: also clear label extraction state
                 isExtractingLabel = false,
                 labelExtractionError = null,

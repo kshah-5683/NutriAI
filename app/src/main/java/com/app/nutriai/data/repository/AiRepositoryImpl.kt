@@ -5,11 +5,13 @@ import com.app.nutriai.data.remote.dto.CatalogMatchDto
 import com.app.nutriai.data.remote.dto.FoodItemDto
 import com.app.nutriai.data.remote.dto.ParseFoodRequest
 import com.app.nutriai.data.remote.dto.ParsedFoodDto
+import com.app.nutriai.data.remote.dto.ClarificationDto
 import com.app.nutriai.data.remote.dto.ScanLabelRequest
 import com.app.nutriai.domain.model.EdgeCatalogMatch
 import com.app.nutriai.domain.model.ExtractedLabelData
 import com.app.nutriai.domain.model.FoodItem
 import com.app.nutriai.domain.model.ParsedFood
+import com.app.nutriai.domain.model.Clarification
 import com.app.nutriai.domain.repository.AiRepository
 import com.app.nutriai.util.Resource
 import javax.inject.Inject
@@ -40,10 +42,13 @@ class AiRepositoryImpl @Inject constructor(
     private val edgeFunctionService: SupabaseEdgeFunctionService
 ) : AiRepository {
 
-    override suspend fun parseFood(input: String): Resource<List<ParsedFood>> {
+    override suspend fun parseFood(
+        input: String,
+        clarificationAnswers: Map<String, String>?
+    ): Resource<List<ParsedFood>> {
         return try {
             val response = edgeFunctionService.parseFoodViaEdge(
-                ParseFoodRequest(foodDescription = input)
+                ParseFoodRequest(foodDescription = input, clarificationAnswers = clarificationAnswers)
             )
 
             if (!response.isSuccessful) {
@@ -170,7 +175,16 @@ private fun ParsedFoodDto.toDomain(): ParsedFood {
         ingredients = ingredients.map { it.toDomain() },
         needsClarification = needsClarification,
         clarificationHint = clarificationHint,
+        clarifications = clarifications?.map { it.toDomain() },
         edgeCatalogMatch = catalogMatch?.toDomain()
+    )
+}
+
+private fun ClarificationDto.toDomain(): Clarification {
+    return Clarification(
+        id = id,
+        question = question,
+        options = options
     )
 }
 

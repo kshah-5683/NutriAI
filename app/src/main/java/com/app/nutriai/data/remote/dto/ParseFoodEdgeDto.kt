@@ -16,7 +16,8 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 data class ParseFoodRequest(
-    val foodDescription: String
+    val foodDescription: String,
+    val clarificationAnswers: Map<String, String>? = null
 )
 
 /**
@@ -51,7 +52,16 @@ data class ParsedFoodDto(
     @SerialName("needsClarification")
     val needsClarification: Boolean = false,
     @SerialName("clarificationHint")
-    val clarificationHint: String? = null
+    val clarificationHint: String? = null,
+    @SerialName("clarifications")
+    val clarifications: List<ClarificationDto>? = null
+)
+
+@Serializable
+data class ClarificationDto(
+    val id: String,
+    val question: String,
+    val options: List<String> = emptyList()
 )
 
 /**

@@ -36,6 +36,10 @@ export function AiInputSection({ onLogAll, onLogAllLoading }: AiInputSectionProp
   const nutritionLoading = useLogFormStore((s) => s.nutritionLoading);
   const clarificationResolutions = useLogFormStore((s) => s.clarificationResolutions);
   const resolveClarification = useLogFormStore((s) => s.resolveClarification);
+  const multiClarificationAnswers = useLogFormStore((s) => s.multiClarificationAnswers);
+  const activeClarificationIndices = useLogFormStore((s) => s.activeClarificationIndices);
+  const answerClarification = useLogFormStore((s) => s.answerClarification);
+  const previousClarificationQuestion = useLogFormStore((s) => s.previousClarificationQuestion);
 
   const parseMutation = useParseFood();
   const { lookupNutrition, lookupAll } = useNutritionLookup();
@@ -215,6 +219,13 @@ export function AiInputSection({ onLogAll, onLogAllLoading }: AiInputSectionProp
               nutritionLoading={nutritionLoading[food.name] ?? false}
               onSelect={selectFood}
               clarificationResolution={clarificationResolutions[i]}
+              clarificationAnswers={multiClarificationAnswers[i]}
+              activeClarificationIndex={activeClarificationIndices[i]}
+              onAnswerClarification={(clarificationId, answer) =>
+                answerClarification(i, clarificationId, answer, parseMutation)
+              }
+              onBackClarification={() => previousClarificationQuestion(i)}
+              isParsing={isParsing}
               onUseGeneric={handleUseGeneric}
               onSubmitClarification={handleSubmitClarification}
               onEditIngredient={(ingIndex, current) => handleEditIngredient(i, ingIndex, current)}

@@ -1827,5 +1827,78 @@ Created a new agent skill `update-logs-readme` to define a playbook for systemat
 
 ---
 
+## Phase W22: Multi-Turn Recipe-First AI Parsing
+
+**Status:** ✅ Completed
+**Date:** June 8, 2026
+
+### Summary
+
+Implemented client-side UI and state updates on the Next.js Web companion application to support sequential, multi-turn AI clarifications. Enabled sending structured previous clarification answers back to the Supabase Edge Function to iteratively resolve recipe details and food selections. Fixed a multi-turn infinite clarification loop by dynamically appending clarification answers to the prompt food entry and introducing high-priority LLM override rules.
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `webapp/lib/types/ai.ts` | Updated | Added `Clarification` interface and extended `ParsedFood` model with optional list of `clarifications` to parse DTO structure. |
+| 2 | `webapp/lib/stores/log-form-store.ts` | Updated | Added Zustand store state fields `multiClarificationAnswers` and `activeClarificationIndices` to track sequential wizard progress. Added actions `answerClarification` and `previousClarificationQuestion` to drive step transitions and dispatch mutation calls. |
+| 3 | `webapp/lib/hooks/use-parse-food.ts` | Updated | Extended the `useParseFood` mutation hook to optionally accept and forward `clarificationAnswers` map parameter to the backend endpoint. |
+| 4 | `webapp/components/parsed-food-card.tsx` | Updated | Integrated `<MultiClarificationInput />` into the card display, conditionally rendering it when structured clarifications are present in the response DTO. |
+| 5 | `webapp/components/clarification-input.tsx` | Updated | Developed `<MultiClarificationInput />` component to render questions, custom option buttons, and a text input fallback one-by-one. |
+| 6 | `webapp/components/ai-input-section.tsx` | Updated | Connected the sequential clarification events and state hooks from the store into the layout. |
+| 7 | `supabase/functions/_shared/prompts.ts` | Updated | Expanded instructions to handle custom entry redirections, added high-priority override rules, and appended previous clarification answers to the `Food entry` prompt string to resolve loops. |
+| 8 | `supabase/functions/lookup-nutrition/index.ts` | Updated | Ported the exact name and prefix match sorting logic to the FDC lookup within the lookup-nutrition Edge Function to achieve full parity for the Web companion. |
+
+
+### Key Implementation Details
+
+**Iterative Mutate-On-Resolution in log-form-store:**
+```typescript
+  answerClarification: (foodIndex, clarificationId, answer, parseMutation) => {
+    set((state) => {
+      const currentAnswers = state.multiClarificationAnswers[foodIndex] ?? {};
+      const updatedAnswers = { ...currentAnswers, [clarificationId]: answer };
+      const multiAnswers = { ...state.multiClarificationAnswers, [foodIndex]: updatedAnswers };
+
+      const food = state.parsedFoods[foodIndex];
+      if (!food) return state;
+
+      const totalQuestions = food.clarifications?.length ?? 0;
+      const currentIndex = state.activeClarificationIndices[foodIndex] ?? 0;
+
+      if (currentIndex + 1 < totalQuestions) {
+        return {
+          multiClarificationAnswers: multiAnswers,
+          activeClarificationIndices: {
+            ...state.activeClarificationIndices,
+            [foodIndex]: currentIndex + 1,
+          },
+        };
+      } else {
+        // All clarifications resolved, send back to Edge Function
+        setTimeout(() => {
+          parseMutation.mutate({
+            foodDescription: state.aiInput,
+            clarificationAnswers: updatedAnswers,
+          });
+        }, 0);
+        
+        // Clear clarification state for this food in the store
+        const nextMultiAnswers = { ...multiAnswers };
+        delete nextMultiAnswers[foodIndex];
+        const nextIndices = { ...state.activeClarificationIndices };
+        delete nextIndices[foodIndex];
+
+        return {
+          multiClarificationAnswers: nextMultiAnswers,
+          activeClarificationIndices: nextIndices,
+        };
+      }
+    });
+  }
+```
+
+---
+
 *End of Web App Development Log*
 

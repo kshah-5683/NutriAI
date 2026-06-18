@@ -57,6 +57,7 @@ NutriAI/
 
 ### Android Development
 * Build debug application: `./gradlew assembleDebug`
+* Build debug application (Windows, using user-space JDK 17): `cmd /c "(set JAVA_HOME=C:\Users\<Username>\AppData\Local\Java\jdk17) && gradlew.bat assembleDebug"`
 * Run tests: `./gradlew test`
 
 ### Web Development

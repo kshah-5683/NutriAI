@@ -25,10 +25,13 @@ export function useParseFood() {
       setIsParsing(true);
       setAiError(null);
     },
-    mutationFn: async (foodDescription: string) => {
+    mutationFn: async (
+      args: string | { foodDescription: string; clarificationAnswers?: Record<string, string> }
+    ) => {
+      const body = typeof args === "string" ? { foodDescription: args } : args;
       const { data, error } = await supabase.functions.invoke(
         EDGE_FUNCTIONS.PARSE_FOOD,
-        { body: { foodDescription } }
+        { body }
       );
 
       if (error) throw new Error(error.message ?? "Failed to parse food");

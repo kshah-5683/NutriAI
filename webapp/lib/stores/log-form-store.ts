@@ -100,6 +100,10 @@ interface LogFormState {
   // Absent key = not yet resolved (clarification banner is showing)
   clarificationResolutions: Record<number, ClarificationResolution>;
 
+  // Multi-turn clarification state — keyed by parsed food index
+  multiClarificationAnswers: Record<number, Record<string, string>>;
+  activeClarificationIndices: Record<number, number>;
+
   // Manual form state — flat ingredient mode
   foodName: string;
   brand: string;
@@ -161,6 +165,13 @@ interface LogFormState {
     type: ClarificationType,
     value?: string
   ) => void;
+  answerClarification: (
+    foodIndex: number,
+    clarificationId: string,
+    answer: string,
+    parseMutation: any
+  ) => void;
+  previousClarificationQuestion: (foodIndex: number) => void;
 
   // Recipe mode actions
   /** Toggle Recipe/Ingredient mode. Ingredient list is preserved across toggles. */
@@ -216,6 +227,8 @@ const initialAiState = {
   nutritionResults: {} as Record<string, NutritionInfo | null>,
   nutritionLoading: {} as Record<string, boolean>,
   clarificationResolutions: {} as Record<number, ClarificationResolution>,
+  multiClarificationAnswers: {} as Record<number, Record<string, string>>,
+  activeClarificationIndices: {} as Record<number, number>,
 };
 
 // ─── Store ────────────────────────────────────────────────────────────────────
@@ -401,6 +414,65 @@ export const useLogFormStore = create<LogFormState>((set, get) => ({
         },
       };
     }),
+
+  answerClarification: (foodIndex, clarificationId, answer, parseMutation) => {
+    set((state) => {
+      const currentAnswers = state.multiClarificationAnswers[foodIndex] ?? {};
+      const updatedAnswers = { ...currentAnswers, [clarificationId]: answer };
+      const multiAnswers = { ...state.multiClarificationAnswers, [foodIndex]: updatedAnswers };
+
+      const food = state.parsedFoods[foodIndex];
+      if (!food) return state;
+
+      const totalQuestions = food.clarifications?.length ?? 0;
+      const currentIndex = state.activeClarificationIndices[foodIndex] ?? 0;
+
+      if (currentIndex + 1 < totalQuestions) {
+        // Move to the next question
+        return {
+          multiClarificationAnswers: multiAnswers,
+          activeClarificationIndices: {
+            ...state.activeClarificationIndices,
+            [foodIndex]: currentIndex + 1,
+          },
+        };
+      } else {
+        // All questions answered, submit back to the edge function!
+        setTimeout(() => {
+          parseMutation.mutate({
+            foodDescription: state.aiInput,
+            clarificationAnswers: updatedAnswers,
+          });
+        }, 0);
+
+        // Clear clarification state for this food in the store
+        const nextMultiAnswers = { ...multiAnswers };
+        delete nextMultiAnswers[foodIndex];
+        const nextIndices = { ...state.activeClarificationIndices };
+        delete nextIndices[foodIndex];
+
+        return {
+          multiClarificationAnswers: nextMultiAnswers,
+          activeClarificationIndices: nextIndices,
+        };
+      }
+    });
+  },
+
+  previousClarificationQuestion: (foodIndex) => {
+    set((state) => {
+      const currentIndex = state.activeClarificationIndices[foodIndex] ?? 0;
+      if (currentIndex > 0) {
+        return {
+          activeClarificationIndices: {
+            ...state.activeClarificationIndices,
+            [foodIndex]: currentIndex - 1,
+          },
+        };
+      }
+      return state;
+    });
+  },
 
   // ─── Recipe mode actions ────────────────────────────────────────────────────
 

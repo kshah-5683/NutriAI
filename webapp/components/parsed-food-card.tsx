@@ -2,7 +2,7 @@
 
 import type { ParsedFood, NutritionInfo } from "@/lib/types/ai";
 import type { ClarificationResolution } from "@/lib/stores/log-form-store";
-import { ClarificationInput, MatchTypeBadge } from "./clarification-input";
+import { ClarificationInput, MultiClarificationInput, MatchTypeBadge } from "./clarification-input";
 import { computeServingMultiplier } from "@/lib/utils/macro-calculator";
 
 interface ParsedFoodCardProps {
@@ -14,6 +14,11 @@ interface ParsedFoodCardProps {
   onSelect: (index: number) => void;
   /** Current clarification resolution for this item (undefined = not yet resolved) */
   clarificationResolution?: ClarificationResolution;
+  clarificationAnswers?: Record<string, string>;
+  activeClarificationIndex?: number;
+  onAnswerClarification?: (clarificationId: string, answer: string) => void;
+  onBackClarification?: () => void;
+  isParsing?: boolean;
   /** Called when user accepts generic estimate */
   onUseGeneric: (index: number) => void;
   /** Called when user submits brand or weight clarification */
@@ -43,6 +48,11 @@ export function ParsedFoodCard({
   nutritionLoading,
   onSelect,
   clarificationResolution,
+  clarificationAnswers = {},
+  activeClarificationIndex = 0,
+  onAnswerClarification,
+  onBackClarification,
+  isParsing = false,
   onUseGeneric,
   onSubmitClarification,
   onEditIngredient,
@@ -162,12 +172,26 @@ export function ParsedFoodCard({
       {/* Clarification banner — shown when AI flagged ambiguous serving size */}
       {showClarificationBanner && (
         <div onClick={(e) => e.stopPropagation()}>
-          <ClarificationInput
-            hint={food.clarificationHint ?? "Serving size varies by brand. Specify a brand or weight for better accuracy?"}
-            onUseGeneric={() => onUseGeneric(index)}
-            onSubmitClarification={(input) => onSubmitClarification(index, input)}
-            isLoading={nutritionLoading}
-          />
+          {food.clarifications && food.clarifications.length > 0 ? (
+            <MultiClarificationInput
+              clarification={food.clarifications[activeClarificationIndex]}
+              activeIndex={activeClarificationIndex}
+              totalQuestions={food.clarifications.length}
+              onAnswerSelected={(answer) =>
+                onAnswerClarification &&
+                onAnswerClarification(food.clarifications![activeClarificationIndex].id, answer)
+              }
+              onBack={onBackClarification}
+              isLoading={isParsing}
+            />
+          ) : (
+            <ClarificationInput
+              hint={food.clarificationHint ?? "Serving size varies by brand. Specify a brand or weight for better accuracy?"}
+              onUseGeneric={() => onUseGeneric(index)}
+              onSubmitClarification={(input) => onSubmitClarification(index, input)}
+              isLoading={nutritionLoading}
+            />
+          )}
         </div>
       )}
 

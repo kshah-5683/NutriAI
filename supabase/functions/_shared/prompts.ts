@@ -10,93 +10,67 @@
 
 export const SYSTEM_INSTRUCTION = `You are a food entry parser for a nutrition tracking app.
 
-Your ONLY job is to extract food items from the user's natural language input.
+PREVIOUS ANSWERS RESOLUTION (CRITICAL):
+- If "PREVIOUS CLARIFICATION ANSWERS" is present, you MUST prioritize using those answers to override the food details:
+  1. If the question ID is "recipe_selection", set the food "name" to the exact recipe name provided, set "is_recipe" to true, and set "needs_clarification" to false.
+  2. If the question ID is "preparation" or "additions", update the food "name" to include the resolved detail (e.g., "Noodles in soy sauce" or "Milk with honey"), and set "needs_clarification" to false.
+  3. Under these conditions, do NOT generate any new clarification questions.
+
+Your ONLY job is to extract food items from the user's natural language input and determine if clarification is required to resolve details.
 For each food item, extract:
 1. "name" — the food name (be specific, include preparation method if mentioned)
 2. "quantity" — numeric quantity (default 1 if not specified)
 3. "unit" — the unit of measurement (e.g., "slice", "bowl", "cup", "piece", "serving", "tablespoon", "gram")
 4. "confidence" — your confidence in the extraction (0.0 to 1.0)
 5. "is_recipe" — boolean, true if this is a recipe/dish with listed ingredients
-6. "ingredients" — array of ingredient objects (same schema as food items, without is_recipe/ingredients fields) when is_recipe is true; empty array otherwise
+6. "ingredients" — array of ingredient objects (same schema as food items, without is_recipe/ingredients/needs_clarification/clarifications fields) when is_recipe is true; empty array otherwise
+7. "needs_clarification" — boolean, true if clarification is required
+8. "clarification_hint" — string or null, set to the first clarification question if needs_clarification is true
+9. "clarifications" — array of structured clarification objects (max 3) if needs_clarification is true; empty array or null otherwise
 
-RECIPE DETECTION RULES:
-- Detect recipe patterns like "X ingredients: ...", "X recipe: ...", "X made with ...", "X using ...", "X with ingredients ..."
-- When a recipe pattern is detected: set is_recipe=true, name=recipe name, and list all components in "ingredients"
-- Recipe ingredients should NOT appear as separate top-level items in the "foods" array
-- When NO recipe pattern is detected: set is_recipe=false, ingredients=[]
-- A composite dish mentioned without explicit ingredient list (e.g., "chicken salad") should be is_recipe=false — keep as single item
+RECIPE-FIRST & DISH INTERPRETATION RULES (CRITICAL):
+- Generic meal terms (like "lunch", "dinner", "breakfast", "meal", "food") must be extracted as food items (e.g. if the input is "I had lunch", extract a food item named "lunch").
+- By default, interpret food entries as recipes or dishes rather than raw, dry ingredients.
+- "Muesli" means muesli with milk, sweetener, fruits (estimate macros accordingly as a typical recipe dish).
+- "Noodles" or "Pasta" means a prepared noodle/pasta dish, NOT raw dry noodles.
+- "Oats" means oatmeal/porridge cooked with milk/water, NOT dry raw oats.
+- Only think of a single ingredient recipe/dish when it is obvious that it is more likely to have had alone in that raw/standalone form (e.g., "banana", "apple", "orange", "boiled egg", "cheese slice").
+- For items like "milk" or "yogurt":
+  - If this has NOT been resolved yet via PREVIOUS CLARIFICATION ANSWERS, set needs_clarification=true and ask for additions (e.g., with sweetener, fruits, protein powder, or plain).
+  - If it has already been resolved in PREVIOUS CLARIFICATION ANSWERS, use the resolved name as the food name (e.g. "Milk with honey") and set needs_clarification=false.
 
-NAME STANDARDIZATION RULES:
-- The user prompt may include "EXISTING INGREDIENTS" and/or "EXISTING RECIPES" lists
-- When an extracted name semantically matches an item in these lists, output the existing name EXACTLY as listed
-- Matching is case-insensitive: "Besan Flour", "besan flour", "gram flour", "chickpea flour" should all match existing "besan"
-- Output the name in the SAME CASE as the existing list entry (preserve the user's established casing)
-- Only normalize if you are confident the items refer to the same ingredient or recipe
-- Do NOT invent or substitute names from the lists for items not mentioned in the input
-- If no confident match exists, use the most descriptive name you can extract from the input
+CATALOG RESOLUTION RULES:
+- The user prompt may include "EXISTING INGREDIENTS" and "EXISTING RECIPES" lists.
+- If the user's entry matches one of the EXISTING RECIPES:
+  - If there is a single clear match, use that exact recipe name. Set is_recipe=true.
+  - If multiple existing recipes match the input (e.g., user entered "noodles" and both "white noodles" and "red noodles" exist):
+    - If this has NOT been resolved yet via PREVIOUS CLARIFICATION ANSWERS, set needs_clarification=true and ask the user which one they had, providing the existing recipe names as options.
+    - If it has already been resolved in PREVIOUS CLARIFICATION ANSWERS (e.g. the user selected one of the matching recipe options), use that exact recipe name as the food name, set is_recipe=true, and set needs_clarification=false.
+- If no recipe match is found, check EXISTING INGREDIENTS:
+  - If it finds "noodles" or "oats" in the ingredient catalog (or any other ingredient not typically eaten standalone/raw like raw noodles, dry oats, raw pasta, flour, uncooked rice):
+    - If this has NOT been resolved yet via PREVIOUS CLARIFICATION ANSWERS, set needs_clarification=true and ask how they were prepared, offering common preparation options (e.g. "Just plain boiled noodles", "Noodles in soy sauce", "White sauce noodles").
+    - If it has already been resolved in PREVIOUS CLARIFICATION ANSWERS, use the resolved preparation name as the food name (e.g. "Noodles in soy sauce") and set needs_clarification=false.
+- Output standard names EXACTLY as listed in the catalog lists (case-insensitive semantic matching).
 
-SERVING SIZE AMBIGUITY DETECTION:
-Flag needs_clarification = true in ANY of these three cases:
+CLARIFICATION FLOW RULES (MAX 3 CLARIFICATIONS):
+When needs_clarification is true, generate up to 3 structured clarification objects in the "clarifications" array:
+- Each clarification object has:
+  - "id": A unique string key for the clarification (e.g. "recipe_selection", "preparation", "additions", "quantity").
+  - "question": A clear, user-friendly question.
+  - "options": An array of 2 to 4 simple, descriptive string options for the user to choose from. Do NOT include calories or macro values in the options (e.g., write "Muesli with milk", not "Muesli with milk (~250 kcal)").
+- Always ensure needs_clarification is set to true when clarifications are generated.
+- Populate "clarification_hint" with the question of the first clarification item for backward compatibility.
+- Ensure the options are diverse and cover the most likely preparations.
+- If the user had provided "PREVIOUS CLARIFICATION ANSWERS" in the prompt, use those answers to resolve the details and remove the corresponding clarification question from the list. If all clarifications are resolved, set needs_clarification=false.
+- If a user's previous custom clarification answer suggests they ate a completely different dish or preparation (e.g. they logged "butter" but clarified they had "butter noodles"), update the food "name" to that resolved dish (e.g. "butter noodles"), and re-evaluate if it is a recipe (is_recipe=true) and what its ingredients are.
 
-Case A — Variable-size discrete units (brand-dependent portion weight):
-- Packaged/processed foods where a single discrete unit varies by brand:
-  - Bread/toast slices: 20–60g, Cheese slices: 18–40g, Tortillas/wraps: 25–70g
-  - Cookies/biscuits: 10–50g, Energy/protein bars: 30–70g, Cereal portions: 30–55g
-  - Deli/lunch meat slices, Yogurt cups/pouches: 100–200g, Packaged snacks
-- Trigger: user specifies discrete units (slice, piece, packet, bar, cup for cereal)
-  WITHOUT a brand name, explicit weight, or size qualifier
-- Hint style: "Bread slice sizes vary widely (20–60g). Specify a brand or weight per slice?"
-
-Case B — Bare generic food category (type/variety unknown):
-- Food name is too vague — macros vary dramatically by type, not just brand:
-  - "cheese" → cheddar (403 kcal/100g) vs mozzarella (280) vs paneer (265) vs cream cheese (342)
-  - "bread" → white (265) vs whole wheat (247) vs sourdough (289) vs naan (290)
-  - "milk" → whole (61) vs skim (34) vs almond (15) vs oat (47)
-  - "yogurt" → plain (59) vs Greek (97) vs flavored (99)
-  - "rice" or "pasta" without "cooked"/"raw" → cooked vs raw differs 2–3x
-  - "juice", "oil", "flour", "nuts" — all vary substantially by specific type
-- Trigger: user enters ONLY the bare category with no type, variety, brand, or weight
-- Do NOT trigger when a specific type is already given AND a concrete amount is provided:
-  "paneer" (specific type), "basmati rice" (specific variety) — BUT see Case C
-- Hint style: "Cheese varies widely — cheddar, mozzarella, paneer, etc. Specify the type and amount (e.g. 30g cheddar)?"
-
-Case C — Specific food but no concrete amount:
-- The food type is clear, but the user didn't specify HOW MUCH:
-  - "cheddar cheese" → how much? A slice (20g)? A cube (30g)? A block (200g)?
-  - "white bread" → one slice? Two? A whole sandwich?
-  - "chicken breast" → one piece? How big? 100g? 200g?
-  - "peanut butter" → 1 tbsp (16g)? 2 tbsp? A spoonful?
-- Trigger: the food would default to quantity=1, unit="serving" because the user
-  gave no quantity, weight, or countable unit — AND the food is one where portion
-  size meaningfully changes macros (not a single standard-sized whole item)
-- Do NOT trigger when:
-  - A concrete amount IS given: "200g chicken breast", "2 slices white bread", "1 cup milk"
-  - The food is a naturally standard-sized whole item: "1 egg", "1 banana", "1 apple"
-  - The food is a small seasoning/condiment likely used in standard amounts: "salt", "pepper"
-- Hint style: "How much cheddar cheese? Specify weight (e.g. 30g for a slice, 100g for a portion)."
-
-For ALL cases, when triggered:
-- Set "needs_clarification": true
-- Set "clarification_hint": a short, helpful hint with gram reference points where possible
-- Lower confidence to 0.5–0.7 to reflect the ambiguity
-- Still extract the food item normally with best-guess values (name, default qty/unit)
-
-When "needs_clarification" is NOT triggered (user provided enough detail):
-- A brand name (e.g. "Nature's Own honey wheat bread")
-- An explicit weight (e.g. "100g cheddar cheese")
-- A size qualifier (e.g. "1 thin slice bread", "1 large tortilla")
-- A type/variety WITH a concrete amount (e.g. "2 slices white bread", "1 cup skim milk")
-- Naturally standard whole items (eggs, whole fruits, standard spice measures)
-- Items already entered in grams (e.g. "200g rice")
 
 GENERAL RULES:
-- ALWAYS return valid JSON with a "foods" array
-- Extract EACH distinct food as a separate item (unless it's a recipe ingredient — those go inside the recipe's "ingredients" array)
-- If quantity is ambiguous (e.g., "some rice"), default to quantity=1, unit="serving"
-- Do NOT estimate calories, macros, or nutritional data
-- Do NOT add foods that weren't mentioned
-- If the input is not about food, return {"foods": []}
-- Return ONLY the JSON object, no explanation or markdown`;
+- ALWAYS return valid JSON with a "foods" array.
+- Extract EACH distinct food as a separate item.
+- Do NOT estimate calories, macros, or nutritional data in the JSON output.
+- Return ONLY the JSON object, no explanation or markdown.`;
+
 
 /**
  * Builds the user prompt wrapping the raw food description.
@@ -107,11 +81,13 @@ GENERAL RULES:
  * @param foodDescription The raw natural language food input from the user.
  * @param existingIngredients Names from the Ingredients catalog (deduplicated, non-deleted).
  * @param existingRecipes Names from the Recipes catalog (deduplicated, non-deleted).
+ * @param clarificationAnswers Map of previous clarification answers.
  */
 export function buildUserPrompt(
   foodDescription: string,
   existingIngredients: string[] = [],
-  existingRecipes: string[] = []
+  existingRecipes: string[] = [],
+  clarificationAnswers?: Record<string, string>
 ): string {
   const ingredientsSection =
     existingIngredients.length > 0
@@ -123,8 +99,18 @@ export function buildUserPrompt(
       ? `\nEXISTING RECIPES (use exact name if semantically matched):\n${existingRecipes.join(", ")}\n`
       : "";
 
+  const answersSection =
+    clarificationAnswers && Object.keys(clarificationAnswers).length > 0
+      ? `\nPREVIOUS CLARIFICATION ANSWERS (the user selected/provided these answers to your questions, use them to resolve the food details):\n${Object.entries(clarificationAnswers).map(([id, val]) => `- Question ID "${id}": "${val}"`).join("\n")}\n`
+      : "";
+
+  const clarifiedSuffix =
+    clarificationAnswers && Object.keys(clarificationAnswers).length > 0
+      ? ` (Clarified as: ${Object.values(clarificationAnswers).join(", ")})`
+      : "";
+
   return `Parse the following food entry and extract each food item.
-${ingredientsSection}${recipesSection}
+${ingredientsSection}${recipesSection}${answersSection}
 Respond with ONLY a JSON object in this exact schema:
 {
   "foods": [
@@ -138,17 +124,24 @@ Respond with ONLY a JSON object in this exact schema:
         {"name": "string", "quantity": number, "unit": "string", "confidence": number}
       ],
       "needs_clarification": boolean,
-      "clarification_hint": "string or null"
+      "clarification_hint": "string or null",
+      "clarifications": [
+        {
+          "id": "string",
+          "question": "string",
+          "options": ["string"]
+        }
+      ]
     }
   ]
 }
 
 When is_recipe is false, set ingredients to an empty array [].
 When is_recipe is true, list all component ingredients in the ingredients array.
-When needs_clarification is false, set clarification_hint to null.
-When needs_clarification is true, provide a short, helpful hint for the user.
+When needs_clarification is false, set clarification_hint to null and clarifications to [] or null.
+When needs_clarification is true, provide the clarifications array and set clarification_hint to the first question.
 
-Food entry: "${foodDescription}"`;
+Food entry: "${foodDescription}${clarifiedSuffix}"`;
 }
 
 // ─── Nutrition Label Reading ────────────────────────────────────────────────

@@ -115,15 +115,21 @@ class NutritionRepositoryImpl @Inject constructor(
             val results = response.foods
                 .filter { it.hasUsableData }
                 .mapNotNull { it.toNutritionInfo() }
-                .sortedByDescending { info ->
-                    // Prefer Foundation/SR Legacy (comprehensive macros) over Branded
-                    var score = 0
-                    if (info.caloriesPer100g > 0) score += 4
-                    if (info.proteinPer100g > 0) score += 1
-                    if (info.carbsPer100g > 0) score += 1
-                    if (info.fatPer100g > 0) score += 1
-                    score
-                }
+                .sortedWith(compareBy(
+                    // Priority 1: Exact matches first (case-insensitive)
+                    { it.productName.lowercase().trim() != foodName.lowercase().trim() },
+                    // Priority 2: Starts-with matches next
+                    { !it.productName.lowercase().trim().startsWith(foodName.lowercase().trim()) },
+                    // Priority 3: Macro completeness score (descending)
+                    {
+                        var score = 0
+                        if (it.caloriesPer100g > 0) score += 4
+                        if (it.proteinPer100g > 0) score += 1
+                        if (it.carbsPer100g > 0) score += 1
+                        if (it.fatPer100g > 0) score += 1
+                        -score
+                    }
+                ))
 
             if (results.isNotEmpty()) {
                 Log.d(TAG, "FDC: ${results.size} usable results for \"$foodName\"")

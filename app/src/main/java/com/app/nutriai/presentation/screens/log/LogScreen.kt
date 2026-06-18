@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -95,6 +96,7 @@ import com.app.nutriai.domain.model.CatalogMatch
 import com.app.nutriai.domain.model.IngredientKey
 import com.app.nutriai.domain.model.MealType
 import com.app.nutriai.domain.model.ParsedFood
+import com.app.nutriai.domain.model.Clarification
 import com.app.nutriai.presentation.components.MealTypeSelector
 import com.app.nutriai.presentation.components.NutritionMatchCard
 import com.app.nutriai.presentation.theme.CalorieColor
@@ -248,6 +250,7 @@ fun LogScreen(
                         uiState = uiState,
                         saveAllLabel = saveAllLabel,
                         isCatalogMode = isCatalogMode,
+                        onMealTypeSelect = viewModel::setMealType,
                         onAiInputChange = viewModel::updateAiInput,
                         onParseClick = viewModel::parseWithAi,
                         onSelectFood = viewModel::selectParsedFood,
@@ -272,6 +275,12 @@ fun LogScreen(
                             } else {
                                 viewModel.resolveClarificationWithBrand(index, input.trim())
                             }
+                        },
+                        onAnswerClarification = { index, id, answer ->
+                            viewModel.answerClarification(index, id, answer)
+                        },
+                        onBackClarification = { index ->
+                            viewModel.previousClarificationQuestion(index)
                         },
                         onLabelPhotoSelected = { uri ->
                             viewModel.onLabelPhotoSelected(uri, "gallery")
@@ -415,6 +424,7 @@ private fun AiInputSection(
     uiState: LogUiState,
     saveAllLabel: String = "Log All",
     isCatalogMode: Boolean = false,
+    onMealTypeSelect: (com.app.nutriai.domain.model.MealType) -> Unit = {},
     onAiInputChange: (String) -> Unit,
     onParseClick: () -> Unit,
     onSelectFood: (Int) -> Unit,
@@ -432,6 +442,8 @@ private fun AiInputSection(
     onConfirmEditIngredient: (qty: String, unit: String) -> Unit = { _, _ -> },
     onUseGeneric: (Int) -> Unit = {},
     onSubmitClarification: (Int, String) -> Unit = { _, _ -> },
+    onAnswerClarification: (Int, String, String) -> Unit = { _, _, _ -> },
+    onBackClarification: (Int) -> Unit = {},
     onLabelPhotoSelected: (Uri) -> Unit = {},
     onClearLabelError: () -> Unit = {},
     modifier: Modifier = Modifier
@@ -614,6 +626,14 @@ private fun AiInputSection(
             Column {
                 Spacer(modifier = Modifier.height(16.dp))
 
+                if (!isCatalogMode) {
+                    MealTypeSelector(
+                        selected = uiState.mealType,
+                        onSelect = onMealTypeSelect
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+
                 // Section header
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -683,15 +703,18 @@ private fun AiInputSection(
                         isSelected = isThisCardSelected,
                         catalogMatch = catalogMatch,
                         ingredientMatches = ingredientMatches,
-                        selectedIngredientIndex = if (isThisCardSelected) uiState.selectedIngredientIndex else null,
                         nutritionState = nutritionState,
                         ingredientNutritionStates = ingredientNutritionStates,
                         isRecipeOverride = uiState.recipeOverrides.contains(index),
                         clarificationResolution = uiState.clarificationResolutions[index],
+                        clarificationAnswers = uiState.multiClarificationAnswers[index] ?: emptyMap(),
+                        activeClarificationIndex = uiState.activeClarificationIndices[index] ?: 0,
+                        onAnswerClarification = { id, answer -> onAnswerClarification(index, id, answer) },
+                        onBackClarification = { onBackClarification(index) },
+                        isParsing = uiState.isParsing,
                         onUseGeneric = { onUseGeneric(index) },
                         onSubmitClarification = { input -> onSubmitClarification(index, input) },
                         onClick = { onSelectFood(index) },
-                        onIngredientClick = { ingIdx -> onSelectIngredient(ingIdx) },
                         onToggleRecipeOverride = { onToggleRecipeOverride(index) },
                         onRemoveIngredient = { ingIdx -> onRemoveIngredient(index, ingIdx) },
                         onMoveIngredientUp = { ingIdx -> onMoveIngredientUp(index, ingIdx) },
@@ -709,10 +732,6 @@ private fun AiInputSection(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     // Accept selected → fill manual form
-                    // Shows contextual label: "Edit Ingredient" when one is selected in a recipe
-                    val selectedFood = uiState.selectedParsedFood
-                    val hasIngredientSelected = selectedFood?.isRecipe == true
-                            && uiState.selectedIngredientIndex != null
                     OutlinedButton(
                         onClick = onAcceptFood,
                         modifier = Modifier.weight(1f)
@@ -724,7 +743,7 @@ private fun AiInputSection(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = if (hasIngredientSelected) "Edit Ingredient" else "Edit Selected",
+                            text = "Edit Selected",
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -924,15 +943,18 @@ private fun ParsedFoodCard(
     isSelected: Boolean,
     catalogMatch: CatalogMatch? = null,
     ingredientMatches: List<CatalogMatch>? = null,
-    selectedIngredientIndex: Int? = null,
     nutritionState: NutritionLookupState? = null,
     ingredientNutritionStates: Map<Int, NutritionLookupState> = emptyMap(),
     isRecipeOverride: Boolean = false,
     clarificationResolution: ClarificationResolution? = null,
+    clarificationAnswers: Map<String, String> = emptyMap(),
+    activeClarificationIndex: Int = 0,
+    onAnswerClarification: (String, String) -> Unit = { _, _ -> },
+    onBackClarification: () -> Unit = {},
+    isParsing: Boolean = false,
     onUseGeneric: () -> Unit = {},
     onSubmitClarification: (String) -> Unit = {},
     onClick: () -> Unit,
-    onIngredientClick: (Int) -> Unit = {},
     onToggleRecipeOverride: () -> Unit = {},
     onRemoveIngredient: (Int) -> Unit = {},
     onMoveIngredientUp: (Int) -> Unit = {},
@@ -1046,12 +1068,22 @@ private fun ParsedFoodCard(
 
             if (showClarificationBanner) {
                 Spacer(modifier = Modifier.height(6.dp))
-                ClarificationBanner(
-                    hint = food.clarificationHint ?: "Serving size varies by brand. Specify a brand or weight for better accuracy?",
-                    onUseGeneric = onUseGeneric,
-                    onSubmitClarification = onSubmitClarification,
-                    isLoading = nutritionState is NutritionLookupState.Loading
-                )
+                if (!food.clarifications.isNullOrEmpty()) {
+                    MultiClarificationBanner(
+                        clarifications = food.clarifications,
+                        activeIndex = activeClarificationIndex,
+                        onAnswerSelected = onAnswerClarification,
+                        onBack = onBackClarification,
+                        isLoading = isParsing
+                    )
+                } else {
+                    ClarificationBanner(
+                        hint = food.clarificationHint ?: "Serving size varies by brand. Specify a brand or weight for better accuracy?",
+                        onUseGeneric = onUseGeneric,
+                        onSubmitClarification = onSubmitClarification,
+                        isLoading = nutritionState is NutritionLookupState.Loading
+                    )
+                }
             }
 
             // Phase 5: Nutrition lookup status for flat items (not recipes)
@@ -1103,7 +1135,7 @@ private fun ParsedFoodCard(
                 )
             }
 
-            // Phase 4.5: Recipe ingredient list (indented, tappable for editing)
+            // Phase 4.5: Recipe ingredient list (indented, editable inline)
             if (food.isRecipe && food.ingredients.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Column(
@@ -1113,17 +1145,14 @@ private fun ParsedFoodCard(
                 ) {
                     food.ingredients.forEachIndexed { ingIndex, ingredient ->
                         val ingMatch = ingredientMatches?.getOrNull(ingIndex)
-                        val isIngSelected = isSelected && selectedIngredientIndex == ingIndex
                         val ingNutritionState = ingredientNutritionStates[ingIndex]
                         IngredientRow(
                             ingredient = ingredient,
                             isFromCatalog = ingMatch?.isFromCatalog == true,
                             isSelected = isSelected,
-                            isIngredientSelected = isIngSelected,
                             nutritionState = ingNutritionState,
                             canMoveUp = ingIndex > 0,
                             canMoveDown = ingIndex < food.ingredients.lastIndex,
-                            onClick = { onIngredientClick(ingIndex) },
                             onMoveUp = { onMoveIngredientUp(ingIndex) },
                             onMoveDown = { onMoveIngredientDown(ingIndex) },
                             onRemove = { onRemoveIngredient(ingIndex) },
@@ -1132,10 +1161,10 @@ private fun ParsedFoodCard(
                     }
                 }
                 // Hint for ingredient editing
-                if (isSelected && selectedIngredientIndex == null) {
+                if (isSelected) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Tap an ingredient to edit its macros",
+                        text = "Tap ✏️ to edit or reorder ingredients inline",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f),
                         modifier = Modifier.padding(start = 20.dp)
@@ -1204,51 +1233,32 @@ private fun IngredientRow(
     ingredient: ParsedFood,
     isFromCatalog: Boolean,
     isSelected: Boolean,
-    isIngredientSelected: Boolean = false,
     nutritionState: NutritionLookupState? = null,
     canMoveUp: Boolean = false,
     canMoveDown: Boolean = false,
-    onClick: () -> Unit = {},
     onMoveUp: () -> Unit = {},
     onMoveDown: () -> Unit = {},
     onRemove: () -> Unit = {},
     onEdit: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val rowBackground = if (isIngredientSelected) {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-    } else {
-        androidx.compose.ui.graphics.Color.Transparent
-    }
-
     Row(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(6.dp))
-            .background(rowBackground)
-            .clickable(onClick = onClick)
             .padding(horizontal = 6.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Selected indicator or bullet
-        if (isIngredientSelected) {
-            Icon(
-                imageVector = Icons.Filled.Edit,
-                contentDescription = "Selected for editing",
-                modifier = Modifier.size(12.dp),
-                tint = MaterialTheme.colorScheme.primary
-            )
-        } else {
-            Text(
-                text = "\u2022",
-                style = MaterialTheme.typography.bodySmall,
-                color = if (isSelected) {
-                    MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                }
-            )
-        }
+        // Bullet point indicator
+        Text(
+            text = "\u2022",
+            style = MaterialTheme.typography.bodySmall,
+            color = if (isSelected) {
+                MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            }
+        )
         Spacer(modifier = Modifier.width(6.dp))
         Text(
             text = buildString {
@@ -1256,10 +1266,8 @@ private fun IngredientRow(
                 append(" (${ingredient.quantity.formatQuantity()} ${ingredient.unit})")
             },
             style = MaterialTheme.typography.bodySmall,
-            fontWeight = if (isIngredientSelected) FontWeight.Medium else FontWeight.Normal,
-            color = if (isIngredientSelected) {
-                MaterialTheme.colorScheme.primary
-            } else if (isSelected) {
+            fontWeight = FontWeight.Normal,
+            color = if (isSelected) {
                 MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
             } else {
                 MaterialTheme.colorScheme.onSurfaceVariant
@@ -1598,6 +1606,142 @@ private fun ClarificationBanner(
                         if (isLoading) "Looking up..." else "Update & Lookup",
                         style = MaterialTheme.typography.labelSmall
                     )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Sequential structured clarification wizard banner shown inside ParsedFoodCard.
+ */
+@Composable
+private fun MultiClarificationBanner(
+    clarifications: List<Clarification>,
+    activeIndex: Int,
+    onAnswerSelected: (String, String) -> Unit,
+    onBack: () -> Unit,
+    isLoading: Boolean = false,
+    modifier: Modifier = Modifier
+) {
+    val currentClarification = clarifications.getOrNull(activeIndex) ?: return
+    var customText by remember { mutableStateOf("") }
+
+    // Reset custom text when activeIndex changes
+    LaunchedEffect(activeIndex) {
+        customText = ""
+    }
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f)
+        ),
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp)
+        ) {
+            // Question and Back button header
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (activeIndex > 0) {
+                    androidx.compose.material3.IconButton(
+                        onClick = onBack,
+                        enabled = !isLoading,
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                }
+
+                Text(
+                    text = currentClarification.question,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Options list (Vertical Column of buttons)
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                currentClarification.options.forEach { option ->
+                    OutlinedButton(
+                        onClick = { onAnswerSelected(currentClarification.id, option) },
+                        enabled = !isLoading,
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(vertical = 10.dp, horizontal = 12.dp)
+                    ) {
+                        Text(
+                            text = option,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            textAlign = TextAlign.Start,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // "Something else..." custom text field
+            OutlinedTextField(
+                value = customText,
+                onValueChange = { customText = it },
+                placeholder = {
+                    Text(
+                        "Something else... (type custom answer)",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                },
+                enabled = !isLoading,
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions.Default,
+                keyboardActions = KeyboardActions(
+                    onDone = {
+                        if (customText.isNotBlank()) {
+                            onAnswerSelected(currentClarification.id, customText.trim())
+                        }
+                    }
+                )
+            )
+
+            if (customText.isNotBlank()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        onAnswerSelected(currentClarification.id, customText.trim())
+                    },
+                    enabled = !isLoading,
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    if (isLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 1.5.dp,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+                    Text("Submit", style = MaterialTheme.typography.labelSmall)
                 }
             }
         }

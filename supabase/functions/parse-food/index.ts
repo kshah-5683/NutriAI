@@ -22,7 +22,7 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return handleCors();
 
   try {
-    const { foodDescription } = await req.json();
+    const { foodDescription, clarificationAnswers } = await req.json();
 
     // 1. Validate input
     if (!foodDescription?.trim() || foodDescription.length > 500) {
@@ -80,7 +80,8 @@ serve(async (req) => {
     const userPrompt = buildUserPrompt(
       foodDescription,
       existingIngredients,
-      existingRecipes
+      existingRecipes,
+      clarificationAnswers
     );
 
     // 6. Call Gemma 4 API
@@ -199,6 +200,7 @@ serve(async (req) => {
           // Catalog match overrides clarification — user's own data is trusted
           needsClarification: match ? false : (food.needs_clarification ?? false),
           clarificationHint: match ? null : (food.clarification_hint ?? null),
+          clarifications: match ? null : (food.clarifications ?? null),
         };
       })
     );

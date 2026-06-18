@@ -25,9 +25,13 @@ interface AiRepository {
      *   → [ParsedFood("oatmeal", 1.0, "bowl"), ParsedFood("honey", 1.0, "serving")]
      *
      * @param input Natural language description of food consumed
+     * @param clarificationAnswers Optional map of previously answered clarification IDs and selected options
      * @return [Resource] wrapping a list of [ParsedFood] entities, or an error
      */
-    suspend fun parseFood(input: String): Resource<List<ParsedFood>>
+    suspend fun parseFood(
+        input: String,
+        clarificationAnswers: Map<String, String>? = null
+    ): Resource<List<ParsedFood>>
 
     /**
      * Extract per-serving nutrition data from a food label photo using Gemma 4's vision.

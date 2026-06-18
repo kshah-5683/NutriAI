@@ -55,7 +55,22 @@ async function searchFdc(
         (
           a: NonNullable<ReturnType<typeof mapFdcToNutritionInfo>>,
           b: NonNullable<ReturnType<typeof mapFdcToNutritionInfo>>
-        ) => macroScore(b) - macroScore(a)
+        ) => {
+          const queryLower = query.toLowerCase().trim();
+          
+          // Priority 1: Exact matches first (case-insensitive)
+          const aExact = a.productName.toLowerCase().trim() === queryLower;
+          const bExact = b.productName.toLowerCase().trim() === queryLower;
+          if (aExact !== bExact) return aExact ? -1 : 1;
+
+          // Priority 2: Starts-with matches next
+          const aStarts = a.productName.toLowerCase().trim().startsWith(queryLower);
+          const bStarts = b.productName.toLowerCase().trim().startsWith(queryLower);
+          if (aStarts !== bStarts) return aStarts ? -1 : 1;
+
+          // Priority 3: Macro completeness score (descending)
+          return macroScore(b) - macroScore(a);
+        }
       );
 
     return ranked.length > 0 ? ranked[0] : null;

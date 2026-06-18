@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 interface ClarificationInputProps {
   /** AI-generated hint explaining why clarification is needed */
@@ -91,6 +91,122 @@ export function ClarificationInput({
         >
           {isLoading ? "Looking up..." : "Update & Lookup"}
         </button>
+      </div>
+    </div>
+  );
+}
+
+interface MultiClarificationInputProps {
+  clarification: {
+    id: string;
+    question: string;
+    options: string[];
+  };
+  activeIndex: number;
+  totalQuestions: number;
+  onAnswerSelected: (answer: string) => void;
+  onBack?: () => void;
+  isLoading?: boolean;
+}
+
+export function MultiClarificationInput({
+  clarification,
+  activeIndex,
+  totalQuestions,
+  onAnswerSelected,
+  onBack,
+  isLoading,
+}: MultiClarificationInputProps) {
+  const [customText, setCustomText] = useState("");
+
+  // Reset custom text when activeIndex changes
+  useEffect(() => {
+    setCustomText("");
+  }, [activeIndex]);
+
+  const handleCustomSubmit = () => {
+    const trimmed = customText.trim();
+    if (trimmed) {
+      onAnswerSelected(trimmed);
+    }
+  };
+
+  return (
+    <div
+      className="mt-2 rounded-md border p-3 flex flex-col gap-2.5"
+      style={{
+        backgroundColor: "var(--bg-tertiary-container, rgba(0, 0, 0, 0.03))",
+        borderColor: "var(--border-variant)",
+      }}
+    >
+      {/* Header with back button */}
+      <div className="flex items-center gap-2">
+        {activeIndex > 0 && onBack && (
+          <button
+            onClick={onBack}
+            disabled={isLoading}
+            className="p-1 rounded hover:bg-black/5 dark:hover:bg-white/5 transition-colors disabled:opacity-50 text-sm font-bold"
+            style={{ color: "var(--color-primary)" }}
+          >
+            ←
+          </button>
+        )}
+        <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+          {clarification.question}
+        </span>
+      </div>
+
+      {/* Options list */}
+      <div className="flex flex-col gap-1.5">
+        {clarification.options.map((option, i) => (
+          <button
+            key={i}
+            onClick={() => onAnswerSelected(option)}
+            disabled={isLoading}
+            className="w-full text-left rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50"
+            style={{
+              borderColor: "var(--border-variant)",
+              color: "var(--color-primary)",
+              backgroundColor: "var(--bg-surface)",
+            }}
+          >
+            {option}
+          </button>
+        ))}
+      </div>
+
+      {/* "Something else..." custom text field */}
+      <div className="flex flex-col gap-1.5">
+        <input
+          type="text"
+          value={customText}
+          onChange={(e) => setCustomText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleCustomSubmit();
+          }}
+          placeholder="Something else... (type custom answer)"
+          disabled={isLoading}
+          className="w-full rounded-md border px-3 py-2 text-sm outline-none transition-colors disabled:opacity-50"
+          style={{
+            backgroundColor: "var(--bg-surface)",
+            borderColor: "var(--border-variant)",
+            color: "var(--text-primary)",
+          }}
+        />
+
+        {customText.trim() && (
+          <button
+            onClick={handleCustomSubmit}
+            disabled={isLoading}
+            className="self-end rounded-md px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50"
+            style={{
+              backgroundColor: "var(--color-primary)",
+              color: "var(--color-on-primary, #fff)",
+            }}
+          >
+            {isLoading ? "Submitting..." : "Submit"}
+          </button>
+        )}
       </div>
     </div>
   );
