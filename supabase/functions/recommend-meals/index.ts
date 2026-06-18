@@ -20,6 +20,38 @@ import {
 import { extractJson } from "../_shared/json-utils.ts";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 
+/**
+ * Helper to fetch a resource with retries for transient 5xx errors.
+ */
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  retries = 3,
+  delay = 1000
+): Promise<Response> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await fetch(url, options);
+      if (response.status >= 500 && i < retries - 1) {
+        console.warn(`Gemini API returned ${response.status}. Retrying in ${delay}ms... (Attempt ${i + 1}/${retries})`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        delay *= 2;
+        continue;
+      }
+      return response;
+    } catch (err) {
+      if (i < retries - 1) {
+        console.warn(`Fetch error: ${err}. Retrying in ${delay}ms... (Attempt ${i + 1}/${retries})`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        delay *= 2;
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error("Fetch failed after all retries");
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return handleCors();
 
@@ -172,7 +204,7 @@ serve(async (req) => {
 
     // 7. Call Gemma 4
     const geminiKey = Deno.env.get("GEMINI_API_KEY")!;
-    const response = await fetch(
+    const response = await fetchWithRetry(
       `https://generativelanguage.googleapis.com/v1beta/models/gemma-4-26b-a4b-it:generateContent?key=${geminiKey}`,
       {
         method: "POST",
