@@ -1920,6 +1920,7 @@ Enabled Google Sign-In on the web application by implementing Server Actions tha
 | 5 | `webapp/components/dashboard-shell.tsx` | Updated | Standardized top header logo title and container colors to switch between primary light/dark variants during dark mode active states. |
 | 6 | `webapp/app/insights/page.tsx` | Updated | Updated the "Insights" screen title color to use theme-aware `var(--text-branded)` to prevent dark mode contrast blend. |
 | 7 | `webapp/app/settings/profile-section.tsx` | Updated | Adjusted profile-save success text color, and implemented collapsible inline form expansion with Cancel/Save buttons matching Android layout. |
+| 8 | `webapp/package.json` | Updated | Upgraded target Node.js engine to `24.x` to prevent Vercel build failure from `@supabase/supabase-js` requirements. |
 
 ### Key Implementation Details
 
