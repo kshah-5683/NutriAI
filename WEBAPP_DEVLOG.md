@@ -1900,5 +1900,56 @@ Implemented client-side UI and state updates on the Next.js Web companion applic
 
 ---
 
+## Phase W23: Google Sign-In Integration (Web Client)
+
+**Status:** ✅ Completed
+**Date:** July 2, 2026
+
+### Summary
+
+Enabled Google Sign-In on the web application by implementing Server Actions that leverage the `@supabase/ssr` browser client to direct users to Google's OAuth consent screens and process the callback code. Rendered a dynamic Google OAuth button on the sign-in screen matching design specifications.
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `webapp/app/auth/actions.ts` | Updated | Implemented and exported the `signInWithGoogle()` Next.js server action to generate the redirection URL. |
+| 2 | `webapp/app/auth/sign-in/page.tsx` | Updated | Added the "Continue with Google" button, bound a click event handler to the server action, and configured client-side error states. |
+| 3 | `webapp/app/settings/page.tsx` | Updated | Added the "Account Connections" card layout, bound "Link Google Account" button to `supabase.auth.linkIdentity()`, corrected text colors for dark mode contrast, renamed header to "Nutrition Goals", and implemented collapsible inline form expansion. |
+| 4 | `webapp/app/auth/layout.tsx` | Updated | Adjusted "NutriAI" title color contrast and salad bowl avatar background container to resolve correctly in dark mode. |
+| 5 | `webapp/components/dashboard-shell.tsx` | Updated | Standardized top header logo title and container colors to switch between primary light/dark variants during dark mode active states. |
+| 6 | `webapp/app/insights/page.tsx` | Updated | Updated the "Insights" screen title color to use theme-aware `var(--text-branded)` to prevent dark mode contrast blend. |
+| 7 | `webapp/app/settings/profile-section.tsx` | Updated | Adjusted profile-save success text color, and implemented collapsible inline form expansion with Cancel/Save buttons matching Android layout. |
+
+### Key Implementation Details
+
+**Google Sign-In Redirection Action:**
+```typescript
+export async function signInWithGoogle(): Promise<{ error?: string; url?: string }> {
+  const { headers } = await import("next/headers");
+  const supabase = await createClient();
+  const origin = (await headers()).get("origin") || "";
+
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: {
+      redirectTo: `${origin}/auth/confirm`,
+    },
+  });
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  if (data.url) {
+    return { url: data.url };
+  }
+
+  return { error: "Failed to generate Google Sign-In redirect URL" };
+}
+```
+
+---
+
 *End of Web App Development Log*
 

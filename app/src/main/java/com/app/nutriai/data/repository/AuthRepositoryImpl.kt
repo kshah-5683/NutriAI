@@ -11,6 +11,7 @@ import com.app.nutriai.data.local.preferences.AuthSession
 import com.app.nutriai.data.remote.api.SupabaseAuthApiService
 import com.app.nutriai.data.remote.dto.GoTrueError
 import com.app.nutriai.data.remote.dto.GoTrueResponse
+import com.app.nutriai.data.remote.dto.IdTokenSignInRequest
 import com.app.nutriai.data.remote.dto.RefreshTokenRequest
 import com.app.nutriai.data.remote.dto.SignInRequest
 import com.app.nutriai.data.remote.dto.SignUpRequest
@@ -90,6 +91,18 @@ class AuthRepositoryImpl @Inject constructor(
         } catch (e: Exception) {
             Log.e(TAG, "Sign-in network error", e)
             Resource.Error("Sign-in failed: ${e.localizedMessage ?: "Network error"}", e)
+        }
+    }
+
+    override suspend fun signInWithGoogle(idToken: String): Resource<AuthState> {
+        return try {
+            val response = authApiService.signInWithIdToken(
+                body = IdTokenSignInRequest(idToken = idToken)
+            )
+            handleAuthResponse(response)
+        } catch (e: Exception) {
+            Log.e(TAG, "Google sign-in network error", e)
+            Resource.Error("Google sign-in failed: ${e.localizedMessage ?: "Network error"}", e)
         }
     }
 

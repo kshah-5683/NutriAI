@@ -35,6 +35,8 @@ android {
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"${localProperties.getProperty("SUPABASE_ANON_KEY", "")}\"")
         // Phase 5.5: USDA FoodData Central API key (free — https://fdc.nal.usda.gov/api-key-signup.html)
         buildConfigField("String", "USDA_FDC_API_KEY", "\"${localProperties.getProperty("USDA_FDC_API_KEY", "")}\"")
+        // Google Web Client ID for OAuth / Credential Manager
+        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"${localProperties.getProperty("GOOGLE_WEB_CLIENT_ID", "")}\"")
     }
 
     buildTypes {
@@ -129,6 +131,11 @@ dependencies {
 
     // DataStore (Preferences)
     implementation(libs.datastore.preferences)
+
+    // Google Auth / Credential Manager
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services.auth)
+    implementation(libs.googleid)
 
     // Coroutines
     implementation(libs.kotlinx.coroutines.android)

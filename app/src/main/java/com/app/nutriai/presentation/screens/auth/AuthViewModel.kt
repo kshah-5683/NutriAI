@@ -10,6 +10,7 @@ import com.app.nutriai.domain.model.MacroGoals
 import com.app.nutriai.domain.model.UserProfile
 import com.app.nutriai.domain.usecase.GetAuthStateUseCase
 import com.app.nutriai.domain.usecase.SignInUseCase
+import com.app.nutriai.domain.usecase.SignInWithGoogleUseCase
 import com.app.nutriai.domain.usecase.SignOutUseCase
 import com.app.nutriai.domain.usecase.SignUpUseCase
 import com.app.nutriai.domain.usecase.SyncDataUseCase
@@ -27,6 +28,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import com.app.nutriai.BuildConfig
 
 // ─────────────────────────────────────────────
 //  UI State
@@ -97,6 +99,7 @@ sealed class AuthEvent {
 class AuthViewModel @Inject constructor(
     private val getAuthStateUseCase: GetAuthStateUseCase,
     private val signInUseCase: SignInUseCase,
+    private val signInWithGoogleUseCase: SignInWithGoogleUseCase,
     private val signUpUseCase: SignUpUseCase,
     private val signOutUseCase: SignOutUseCase,
     private val syncDataUseCase: SyncDataUseCase,
@@ -156,6 +159,26 @@ class AuthViewModel @Inject constructor(
                 is Resource.Success -> {
                     SyncScheduler.schedule(appContext)
                     // Kick off initial sync in the background (don't block navigation)
+                    launch { syncDataUseCase() }
+                    _events.send(AuthEvent.NavigateToHome)
+                }
+                is Resource.Error -> {
+                    _uiState.update { it.copy(errorMessage = result.message) }
+                }
+                is Resource.Loading -> Unit
+            }
+            _uiState.update { it.copy(isLoading = false) }
+        }
+    }
+
+    fun signInWithGoogle(idToken: String) {
+        val state = _uiState.value
+        if (state.isLoading) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+            when (val result = signInWithGoogleUseCase(idToken)) {
+                is Resource.Success -> {
+                    SyncScheduler.schedule(appContext)
                     launch { syncDataUseCase() }
                     _events.send(AuthEvent.NavigateToHome)
                 }
@@ -253,5 +276,13 @@ class AuthViewModel @Inject constructor(
             }
             _uiState.update { it.copy(isSyncing = false, lastSyncMessage = message) }
         }
+    }
+
+    fun getLinkGoogleUrl(): String {
+        val baseUrl = BuildConfig.SUPABASE_URL.trimEnd('/')
+        return "$baseUrl/auth/v1/authorize" +
+                "?provider=google" +
+                "&link=true" +
+                "&redirect_to=https://nutri-ai-git-main-khushi-s-s-projects.vercel.app/auth/confirm"
     }
 }

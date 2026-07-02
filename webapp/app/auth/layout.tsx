@@ -13,11 +13,11 @@ export default function AuthLayout({
       <div className="mb-8 text-center">
         <div
           className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-xl text-3xl"
-          style={{ backgroundColor: "var(--color-primary-container)" }}
+          style={{ backgroundColor: "var(--bg-primary-container)" }}
         >
           🥗
         </div>
-        <h1 className="text-2xl font-semibold text-primary">NutriAI</h1>
+        <h1 className="text-2xl font-semibold text-primary dark:text-primary-light">NutriAI</h1>
       </div>
 
       {children}

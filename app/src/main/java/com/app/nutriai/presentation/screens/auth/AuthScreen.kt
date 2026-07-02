@@ -46,14 +46,29 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
+import android.content.Intent
+import android.net.Uri
+import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.foundation.layout.width
+import androidx.credentials.CredentialManager
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.CustomCredential
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.app.nutriai.BuildConfig
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
@@ -97,6 +112,43 @@ fun AuthScreen(
     var showProfileSheet by rememberSaveable { mutableStateOf(false) }
     val profileSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
+    val onGoogleSignIn: () -> Unit = {
+        coroutineScope.launch {
+            val credentialManager = CredentialManager.create(context)
+            val webClientId = BuildConfig.GOOGLE_WEB_CLIENT_ID
+            if (webClientId.isBlank()) {
+                snackbarHostState.showSnackbar("Google Sign-In is not configured: GOOGLE_WEB_CLIENT_ID is empty")
+            } else {
+                val googleIdOption = GetGoogleIdOption.Builder()
+                    .setServerClientId(webClientId)
+                    .setFilterByAuthorizedAccounts(false)
+                    .setAutoSelectEnabled(false)
+                    .build()
+                
+                val request = GetCredentialRequest.Builder()
+                    .addCredentialOption(googleIdOption)
+                    .build()
+                
+                try {
+                    val result = credentialManager.getCredential(context = context, request = request)
+                    val credential = result.credential
+                    if (credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                        val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
+                        viewModel.signInWithGoogle(googleIdTokenCredential.idToken)
+                    } else {
+                        snackbarHostState.showSnackbar("Unexpected credential type from Google")
+                    }
+                } catch (e: Exception) {
+                    Log.e("AuthScreen", "Google Sign-In failed", e)
+                    snackbarHostState.showSnackbar("Google Sign-In cancelled or failed")
+                }
+            }
+        }
+    }
+
     // Collect one-time navigation events
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
@@ -131,6 +183,16 @@ fun AuthScreen(
             onPasswordChange = viewModel::onPasswordChange,
             onConfirmPasswordChange = viewModel::onConfirmPasswordChange,
             onSignIn = viewModel::signIn,
+            onSignInWithGoogle = onGoogleSignIn,
+            onLinkGoogle = {
+                val linkUrl = viewModel.getLinkGoogleUrl()
+                try {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(linkUrl))
+                    context.startActivity(intent)
+                } catch (e: Exception) {
+                    Log.e("AuthScreen", "Failed to launch link Google browser flow", e)
+                }
+            },
             onSignUp = viewModel::signUp,
             onSignOut = viewModel::signOut,
             onToggleMode = viewModel::toggleSignUpMode,
@@ -188,6 +250,8 @@ private fun AuthContent(
     onPasswordChange: (String) -> Unit,
     onConfirmPasswordChange: (String) -> Unit,
     onSignIn: () -> Unit,
+    onSignInWithGoogle: () -> Unit = {},
+    onLinkGoogle: () -> Unit = {},
     onSignUp: () -> Unit,
     onSignOut: () -> Unit,
     onToggleMode: () -> Unit,
@@ -213,6 +277,7 @@ private fun AuthContent(
                     onPasswordChange = onPasswordChange,
                     onConfirmPasswordChange = onConfirmPasswordChange,
                     onSignIn = onSignIn,
+                    onSignInWithGoogle = onSignInWithGoogle,
                     onSignUp = onSignUp,
                     onToggleMode = onToggleMode,
                     onOpenGoals = onOpenGoals
@@ -225,7 +290,8 @@ private fun AuthContent(
                     onSyncNow = onSyncNow,
                     onSignOut = onSignOut,
                     onOpenGoals = onOpenGoals,
-                    onOpenProfile = onOpenProfile
+                    onOpenProfile = onOpenProfile,
+                    onLinkGoogle = onLinkGoogle
                 )
             }
         }
@@ -254,6 +320,7 @@ private fun AuthFormPanel(
     onPasswordChange: (String) -> Unit,
     onConfirmPasswordChange: (String) -> Unit,
     onSignIn: () -> Unit,
+    onSignInWithGoogle: () -> Unit = {},
     onSignUp: () -> Unit,
     onToggleMode: () -> Unit,
     onOpenGoals: () -> Unit = {}
@@ -395,6 +462,45 @@ private fun AuthFormPanel(
             }
         }
 
+        if (!uiState.isSignUpMode) {
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                HorizontalDivider(modifier = Modifier.weight(1f))
+                Text(
+                    text = "OR",
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                HorizontalDivider(modifier = Modifier.weight(1f))
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            OutlinedButton(
+                onClick = onSignInWithGoogle,
+                enabled = !uiState.isLoading,
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.small
+            ) {
+                Icon(
+                    painter = painterResource(id = com.app.nutriai.R.drawable.ic_google_logo),
+                    contentDescription = "Google Logo",
+                    tint = Color.Unspecified,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = "Continue with Google",
+                    style = MaterialTheme.typography.titleMedium
+                )
+            }
+        }
+
         Spacer(Modifier.height(24.dp))
         HorizontalDivider()
         Spacer(Modifier.height(16.dp))
@@ -438,7 +544,8 @@ private fun ProfilePanel(
     onSyncNow: () -> Unit,
     onSignOut: () -> Unit,
     onOpenGoals: () -> Unit = {},
-    onOpenProfile: () -> Unit = {}
+    onOpenProfile: () -> Unit = {},
+    onLinkGoogle: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier
@@ -606,7 +713,46 @@ private fun ProfilePanel(
             }
         }
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(12.dp))
+        
+        // Link Google Account card
+        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        painter = painterResource(id = com.app.nutriai.R.drawable.ic_google_logo),
+                        contentDescription = "Google Logo",
+                        tint = Color.Unspecified,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Column {
+                        Text(
+                            text = "Link Google Account",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "Connect Google to sign in with either method",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                TextButton(onClick = onLinkGoogle) { Text("Link") }
+            }
+        }
+
+        Spacer(Modifier.height(24.dp))
 
         // Sign out
         OutlinedButton(

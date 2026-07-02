@@ -34,7 +34,7 @@ export default function InsightsPage() {
         {/* Title */}
         <h1
           className="text-2xl font-bold"
-          style={{ color: "var(--color-primary)" }}
+          style={{ color: "var(--text-branded)" }}
         >
           Insights
         </h1>

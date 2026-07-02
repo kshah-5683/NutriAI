@@ -7,7 +7,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -72,8 +72,8 @@ fun NutriAiNavHost() {
             route = Screen.Insights.route
         ),
         BottomNavItem(
-            label = "Profile",
-            icon = Icons.Default.Person,
+            label = "Settings",
+            icon = Icons.Default.Settings,
             route = Screen.Auth.route
         )
     )

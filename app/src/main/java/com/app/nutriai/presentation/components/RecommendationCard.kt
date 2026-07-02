@@ -342,17 +342,7 @@ private fun RecommendationItem(
                         enter = expandVertically() + fadeIn(),
                         exit = shrinkVertically() + fadeOut()
                     ) {
-                        Text(
-                            text = rec.recipeText,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontSize = 12.sp,
-                            lineHeight = 18.sp,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                                .padding(8.dp)
-                        )
+                        FormattedRecipeText(text = rec.recipeText)
                     }
                 }
 
@@ -486,6 +476,144 @@ private fun MacroPill(
             .background(color.copy(alpha = 0.1f))
             .padding(horizontal = 6.dp, vertical = 2.dp)
     )
+}
+
+@Composable
+private fun FormattedRecipeText(text: String) {
+    val methodRegex = Regex("method\\s*:", RegexOption.IGNORE_CASE)
+    val ingredientsRegex = Regex("ingredients\\s*:", RegexOption.IGNORE_CASE)
+
+    val methodMatch = methodRegex.find(text)
+    val ingredientsMatch = ingredientsRegex.find(text)
+
+    var ingredients = emptyList<String>()
+    var steps = emptyList<String>()
+    var fallbackLines = emptyList<String>()
+
+    if (ingredientsMatch != null && methodMatch != null) {
+        val ingStart = ingredientsMatch.range.last + 1
+        val ingEnd = methodMatch.range.first
+        val ingredientsRaw = text.substring(ingStart, ingEnd).trim()
+        val methodRaw = text.substring(methodMatch.range.last + 1).trim()
+
+        ingredients = ingredientsRaw
+            .replace(Regex("\\.\\s*$"), "")
+            .split(",")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+
+        steps = methodRaw
+            .split(Regex("\\.(?:\\s|$)"))
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+    } else if (ingredientsMatch != null) {
+        val ingStart = ingredientsMatch.range.last + 1
+        val ingredientsRaw = text.substring(ingStart).trim()
+        ingredients = ingredientsRaw
+            .replace(Regex("\\.\\s*$"), "")
+            .split(",")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+    } else {
+        fallbackLines = text
+            .split(Regex("[.,]"))
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (fallbackLines.isNotEmpty()) {
+            fallbackLines.forEach { line ->
+                Row(
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "•",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 12.sp
+                    )
+                    Text(
+                        text = line,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp
+                    )
+                }
+            }
+        }
+
+        if (ingredients.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "Ingredients",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                ingredients.forEach { item ->
+                    Row(
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "•",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 12.sp
+                        )
+                        Text(
+                            text = item,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 12.sp,
+                            lineHeight = 18.sp
+                        )
+                    }
+                }
+            }
+        }
+
+        if (steps.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "Method",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                steps.forEach { step ->
+                    Row(
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "•",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 12.sp
+                        )
+                        Text(
+                            text = step,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 12.sp,
+                            lineHeight = 18.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 // ─── Shimmer loading placeholder ─────────────────────────────────────────

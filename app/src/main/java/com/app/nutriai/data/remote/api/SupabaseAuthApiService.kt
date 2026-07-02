@@ -1,6 +1,7 @@
 package com.app.nutriai.data.remote.api
 
 import com.app.nutriai.data.remote.dto.GoTrueResponse
+import com.app.nutriai.data.remote.dto.IdTokenSignInRequest
 import com.app.nutriai.data.remote.dto.RefreshTokenRequest
 import com.app.nutriai.data.remote.dto.SignInRequest
 import com.app.nutriai.data.remote.dto.SignUpRequest
@@ -40,6 +41,16 @@ interface SupabaseAuthApiService {
     suspend fun signIn(
         @Query("grant_type") grantType: String = "password",
         @Body body: SignInRequest
+    ): Response<GoTrueResponse>
+
+    /**
+     * Sign in a user via an external provider ID Token (e.g. Google).
+     * Returns access + refresh tokens on success.
+     */
+    @POST("auth/v1/token")
+    suspend fun signInWithIdToken(
+        @Query("grant_type") grantType: String = "id_token",
+        @Body body: IdTokenSignInRequest
     ): Response<GoTrueResponse>
 
     /**

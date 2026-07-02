@@ -2781,6 +2781,61 @@ val results = response.foods
 
 ---
 
+## Phase 24: Google Sign-In Integration (Android Client & Build Config)
+
+**Status:** ✅ Completed
+**Date:** July 2, 2026
+
+### Summary
+
+Integrated Google Sign-In into the Android application via the Google Credential Manager library, providing a unified authentication flow that exchanges Google ID tokens with Supabase GoTrue REST endpoints. Exposed build variables from `local.properties` to allow secure injection of client IDs.
+
+### Changes Made
+
+| # | File | Action | Description |
+|---|------|--------|-------------|
+| 1 | `gradle/libs.versions.toml` | Updated | Added Android Credential Manager libraries and Google Identity credentials options definition to version catalog. |
+| 2 | `app/build.gradle.kts` | Updated | Added dependencies for `androidx.credentials`, `credentials-play-services-auth`, and `googleid`. Exposed `GOOGLE_WEB_CLIENT_ID` to BuildConfig. |
+| 3 | `local.properties.example` | Updated | Added a configuration placeholder for `GOOGLE_WEB_CLIENT_ID`. |
+| 4 | `local.properties` | Updated | Appended local development placeholder variable `GOOGLE_WEB_CLIENT_ID`. |
+| 5 | `app/src/main/res/drawable/ic_google_logo.xml` | Created | Added custom Google G logo vector resource drawable. |
+| 6 | `app/src/main/java/com/app/nutriai/data/remote/dto/SupabaseAuthDto.kt` | Updated | Defined `IdTokenSignInRequest` data transfer object for authentication requests. |
+| 7 | `app/src/main/java/com/app/nutriai/data/remote/api/SupabaseAuthApiService.kt` | Updated | Added `signInWithIdToken` function declaration targeting `/auth/v1/token` endpoint. |
+| 8 | `app/src/main/java/com/app/nutriai/domain/repository/AuthRepository.kt` | Updated | Added `signInWithGoogle(idToken)` abstract method to AuthRepository domain. |
+| 9 | `app/src/main/java/com/app/nutriai/data/repository/AuthRepositoryImpl.kt` | Updated | Implemented `signInWithGoogle(idToken)` to dispatch token verification calls to Supabase API. |
+| 10 | `app/src/main/java/com/app/nutriai/domain/usecase/SignInWithGoogleUseCase.kt` | Created | Added single-responsibility UseCase class to handle Google authentication delegation. |
+| 11 | `app/src/main/java/com/app/nutriai/presentation/screens/auth/AuthViewModel.kt` | Updated | Injected `SignInWithGoogleUseCase`, implemented `signInWithGoogle(idToken)` action, and added `getLinkGoogleUrl()` helper for OAuth account linking. |
+| 12 | `app/src/main/java/com/app/nutriai/presentation/screens/auth/AuthScreen.kt` | Updated | Wired client-side Google Credential Manager handlers, added Google OutlinedButton, added Google Account Linking card inside ProfilePanel, and fixed preview layouts. |
+| 13 | `app/src/main/java/com/app/nutriai/domain/usecase/README.md` | Updated | Manifest listing update for the added `SignInWithGoogleUseCase` class. |
+| 14 | `app/src/main/java/com/app/nutriai/presentation/components/RecommendationCard.kt` | Updated | Added `FormattedRecipeText` parser composable to render AI recipes as structured, bulleted lists matching Webapp layout formatting. |
+| 15 | `app/src/main/java/com/app/nutriai/presentation/navigation/NutriAiNavHost.kt` | Updated | Renamed the bottom navigation tab from 'Profile' to 'Settings' and changed its icon to `Icons.Default.Settings` to achieve layout parity with the Web Companion. |
+
+### Key Implementation Details
+
+**Google Credential Manager Token Request & Verification Dispatch:**
+```kotlin
+val credentialManager = CredentialManager.create(context)
+val webClientId = BuildConfig.GOOGLE_WEB_CLIENT_ID
+val googleIdOption = GetGoogleIdOption.Builder()
+    .setServerClientId(webClientId)
+    .setFilterByAuthorizedAccounts(false)
+    .setAutoSelectEnabled(false)
+    .build()
+
+val request = GetCredentialRequest.Builder()
+    .addCredentialOption(googleIdOption)
+    .build()
+
+val result = credentialManager.getCredential(context = context, request = request)
+val credential = result.credential
+if (credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+    val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
+    viewModel.signInWithGoogle(googleIdTokenCredential.idToken)
+}
+```
+
+---
+
 ## Appendix: API Keys & Secrets
 
 > ⚠️ **Never commit API keys to version control.**
@@ -2791,3 +2846,4 @@ val results = response.foods
 | ~~Google Gemini~~ | ~~`GEMINI_API_KEY`~~ | ~~Removed in Phase 20 — AI calls go through Edge Functions~~ |
 | Supabase | `SUPABASE_URL` | [Supabase Dashboard](https://supabase.com/dashboard) |
 | Supabase | `SUPABASE_ANON_KEY` | [Supabase Dashboard](https://supabase.com/dashboard) |
+| Google Sign-In | `GOOGLE_WEB_CLIENT_ID` | [Google Cloud Console Credentials](https://console.cloud.google.com/) |

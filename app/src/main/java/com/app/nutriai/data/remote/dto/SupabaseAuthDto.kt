@@ -20,6 +20,12 @@ data class SignInRequest(
 )
 
 @Serializable
+data class IdTokenSignInRequest(
+    val provider: String = "google",
+    @SerialName("id_token") val idToken: String
+)
+
+@Serializable
 data class RefreshTokenRequest(
     @SerialName("refresh_token")
     val refreshToken: String

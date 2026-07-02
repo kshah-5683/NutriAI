@@ -33,6 +33,33 @@ export async function signIn(
 }
 
 /**
+ * Server Action: Initiate Google OAuth sign-in.
+ * Returns the OAuth URL to redirect the user to.
+ */
+export async function signInWithGoogle(): Promise<{ error?: string; url?: string }> {
+  const { headers } = await import("next/headers");
+  const supabase = await createClient();
+  const origin = (await headers()).get("origin") || "";
+
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: {
+      redirectTo: `${origin}/auth/confirm`,
+    },
+  });
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  if (data.url) {
+    return { url: data.url };
+  }
+
+  return { error: "Failed to generate Google Sign-In redirect URL" };
+}
+
+/**
  * Server Action: Sign up with email and password.
  * After sign-up, Supabase sends a confirmation email.
  * The user clicks the link → /auth/confirm route handler exchanges the code.

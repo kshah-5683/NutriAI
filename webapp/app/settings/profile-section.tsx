@@ -77,6 +77,7 @@ export function ProfileSection() {
   const [allergies, setAllergies] = useState<string[]>([]);
   const [customCuisine, setCustomCuisine] = useState("");
   const [customAllergy, setCustomAllergy] = useState("");
+  const [isExpanded, setIsExpanded] = useState(false);
 
   // Track the last profile snapshot we seeded from to avoid re-seeding from stale cache.
   // On save, we optimistically update this to the saved values so the async refetch
@@ -172,9 +173,55 @@ export function ProfileSection() {
 
   if (isLoading) return null;
 
+  const isProfileComplete = profile && (
+    profile.recommendationsEnabled ||
+    profile.age != null ||
+    profile.gender != null ||
+    profile.weightKg != null ||
+    profile.weightGoal != null ||
+    profile.dietType != null ||
+    profile.cuisinePreferences.length > 0 ||
+    profile.allergies.length > 0
+  );
+
+  if (!isExpanded) {
+    return (
+      <div
+        className="rounded-md border p-4 space-y-3"
+        style={{
+          backgroundColor: "var(--bg-surface)",
+          borderColor: "var(--border-variant)",
+        }}
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <h2
+              className="text-sm font-semibold"
+              style={{ color: "var(--text-primary)" }}
+            >
+              AI Recommendations
+            </h2>
+            <p className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>
+              {isProfileComplete ? "Profile configured" : "Set up your dietary preferences"}
+            </p>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setIsExpanded(true)}
+            className="cursor-pointer font-semibold"
+            style={{ color: "var(--text-branded)" }}
+          >
+            {isProfileComplete ? "Edit" : "Set Up"}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
-      className="rounded-md border p-4 space-y-4"
+      className="rounded-md border p-4 space-y-4 animate-in fade-in slide-in-from-top-2 duration-200"
       style={{
         backgroundColor: "var(--bg-surface)",
         borderColor: "var(--border-variant)",
@@ -550,18 +597,44 @@ export function ProfileSection() {
         </div>
       )}
 
-      {/* Save button */}
-      <Button
-        onClick={handleSave}
-        disabled={!hasChanges || updateProfile.isPending}
-        className="w-full"
-      >
-        {updateProfile.isPending ? "Saving..." : "Save Profile"}
-      </Button>
+      {/* Save & Cancel buttons */}
+      <div className="flex gap-3 mt-4">
+        <Button
+          type="button"
+          onClick={() => {
+            if (profile) {
+              setEnabled(profile.recommendationsEnabled);
+              setAge(profile.age != null ? String(profile.age) : "");
+              setGender(profile.gender ?? "");
+              setWeightKg(profile.weightKg != null ? String(profile.weightKg) : "");
+              setWeightGoal(profile.weightGoal ?? "");
+              setDietType(profile.dietType ?? "");
+              setCuisines(profile.cuisinePreferences);
+              setAllergies(profile.allergies);
+            }
+            setIsExpanded(false);
+          }}
+          variant="ghost"
+          className="flex-1 cursor-pointer border"
+          style={{ borderColor: "var(--border-variant)", color: "var(--text-secondary)" }}
+        >
+          Cancel
+        </Button>
+        <Button
+          onClick={() => {
+            handleSave();
+            setIsExpanded(false);
+          }}
+          disabled={!hasChanges || updateProfile.isPending}
+          className="flex-1"
+        >
+          {updateProfile.isPending ? "Saving..." : "Save Profile"}
+        </Button>
+      </div>
 
       {updateProfile.isError && (
         <p
-          className="text-xs text-center"
+          className="text-xs text-center mt-2"
           style={{ color: "var(--color-error-red)" }}
         >
           {updateProfile.error instanceof Error
@@ -572,8 +645,8 @@ export function ProfileSection() {
 
       {updateProfile.isSuccess && !hasChanges && (
         <p
-          className="text-xs text-center"
-          style={{ color: "var(--color-primary)" }}
+          className="text-xs text-center mt-2"
+          style={{ color: "var(--text-branded)" }}
         >
           Profile saved successfully!
         </p>

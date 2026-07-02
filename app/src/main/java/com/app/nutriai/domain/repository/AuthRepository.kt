@@ -46,6 +46,13 @@ interface AuthRepository {
     suspend fun signIn(email: String, password: String): Resource<AuthState>
 
     /**
+     * Sign in a user with a Google ID Token.
+     * On success, the session is persisted and [getAuthStateFlow] transitions
+     * to [AuthState.Authenticated].
+     */
+    suspend fun signInWithGoogle(idToken: String): Resource<AuthState>
+
+    /**
      * Revoke the current session on Supabase and clear the local token.
      * [getAuthStateFlow] transitions to [AuthState.Unauthenticated] on success.
      * The local Room data is NOT wiped — the app continues in offline mode.

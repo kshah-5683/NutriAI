@@ -33,11 +33,11 @@ export function DashboardShell({ children }: { children: ReactNode }) {
         <div className="flex items-center gap-2">
           <div
             className="flex h-8 w-8 items-center justify-center rounded-lg text-lg"
-            style={{ backgroundColor: "var(--color-primary-container)" }}
+            style={{ backgroundColor: "var(--bg-primary-container)" }}
           >
             🥗
           </div>
-          <span className="text-base font-semibold text-primary">NutriAI</span>
+          <span className="text-base font-semibold text-primary dark:text-primary-light">NutriAI</span>
         </div>
 
         <div className="flex items-center gap-2">
